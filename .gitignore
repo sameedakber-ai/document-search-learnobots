@@ -1,3 +1,5 @@
 env
 .idea
 backend/db.*
+backend/media
+backend/api/migrations
