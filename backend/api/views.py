@@ -26,7 +26,7 @@ class DocumentUploadView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        serializer = DocumentSerializer(data=request.data)
+        serializer = DocumentSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
 
         document = serializer.save()

@@ -19,6 +19,7 @@ class DocumentSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = self.context['request'].user
+        print(user)
         file = validated_data.pop('file', None)
         document = Document.objects.create(file=file, name=file.name, owner=user)
         return document
