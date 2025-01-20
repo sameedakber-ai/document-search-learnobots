@@ -9,7 +9,6 @@ class DocumentProcessService:
             documents, relationship_types = KnowledgeGenerator(elements=elements).generate_knowledge()
 
             graph = Neo4jGraph()
-            graph.delete_all_data()
 
             for document in documents:
                 try:

@@ -113,7 +113,6 @@ def get_chat_model(service, workspace):
             temperature=workspace.temperature
         )
 
-
 def get_langchain_embedding_model(service):
 
     if service == 'azure':
@@ -490,17 +489,17 @@ class KnowledgeGenerator:
     def __init__(self, elements):
         self.elements = elements
 
-    def generate_node_and_relationship_types(self, existing_documents: List[Document],
+    def generate_node_and_relationship_types(self, all_types: Dict,
                                              element: Element) -> DocumentNodeAndRelationshipTypes:
-        all_entities = []
-        all_relationships = []
+        all_entities = all_types['node_types']
+        all_relationships = all_types['relationship_types']
 
-        for document in existing_documents:
-            all_entities.extend([i.label for i in document.knowledge.entities])
-            all_relationships.extend([i.type for i in document.knowledge.relationships])
-
-        all_entities = list(set(all_entities))
-        all_relationships = list(set(all_relationships))
+        # for document in existing_documents:
+        #     all_entities.extend([i.label for i in document.knowledge.entities])
+        #     all_relationships.extend([i.type for i in document.knowledge.relationships])
+        #
+        # all_entities = list(set(all_entities))
+        # all_relationships = list(set(all_relationships))
 
         while True:
             response = client.chat.completions.create(
@@ -691,15 +690,36 @@ class KnowledgeGenerator:
 
 
     def generate_knowledge(self) -> KnowledgeGraphData:
+        graph = Neo4jGraph()
+        types = graph.get_unique_node_and_relationship_types()
+        print("\n\ntypes: \n", types, "\n\n")
         documents = []
 
         for text_element in self.elements:
             try:
-                types_template = self.generate_node_and_relationship_types(existing_documents=documents,
-                                                                      element=text_element)
-                knowledge = self.generate_knowledge_graph(element=text_element, types=types_template)
-                documents.append(Document(text=text_element.text, knowledge=knowledge,
-                                          metadata={'source': text_element.metadata['source']}))
+                types_template = self.generate_node_and_relationship_types(
+                    all_types=types,
+                    element=text_element
+                )
+                knowledge = self.generate_knowledge_graph(
+                    element=text_element,
+                    types=types_template
+                )
+
+                entity_types = [i.label for i in knowledge.entities]
+                relationship_types = [i.type for i in knowledge.relationships]
+
+                types['node_types'].extend(entity_types)
+                types['relationship_types'].extend(relationship_types)
+
+                types['node_types'] = list(set(types['node_types']))
+                types['relationship_types'] = list(set(types['relationship_types']))
+
+                documents.append(Document(
+                    text=text_element.text,
+                    knowledge=knowledge,
+                    metadata={'source': text_element.metadata['source']})
+                )
             except Exception as e:
                 print(e)
                 continue
@@ -1291,6 +1311,9 @@ class Neo4jGraph:
                 for doc_id in document_ids:
                     if len(final_documents) >= min_final_docs:
                         return
+
+                    print('query_embedding: ', len(query_embedding))
+                    print('doc_embedding: ', len(self.get_document_text_embedding(doc_id=doc_id)))
 
                     if calculate_cosine_similarity(query_embedding,
                                                    self.get_document_text_embedding(doc_id=doc_id)) <= 0.70:
