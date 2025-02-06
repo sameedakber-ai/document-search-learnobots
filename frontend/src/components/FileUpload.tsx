@@ -42,17 +42,14 @@ const FileUpload = () => {
                     },
                 }); // Use await for the API call
 
-                if (res.status === 201) {
-                    alert(res.data);
-                } else {
-                    alert('not uploaded')
-                }
             } catch (error: any) {
                 alert(error.message || "An error occurred"); // Handle errors
             }
         }
 
         setIsUploading(false);
+        setUploadProgress(0);
+        setFiles([]);
     };
 
     const cancelUpload = () => {
@@ -67,7 +64,7 @@ const FileUpload = () => {
     };
 
     return (
-        <div className="max-w-lg mx-auto mt-8 p-6 bg-white rounded-2xl shadow-md">
+        <div className="max-w-lg mt-4 p-4 bg-red-100 rounded-2xl shadow-md border-1 border-red-500">
             <h1 className="text-2xl font-semibold mb-4">File Upload</h1>
             <div>
                 <input
@@ -79,7 +76,7 @@ const FileUpload = () => {
 
                 {files.length > 0 && (
                     <div className="mb-4">
-                        <ul className="space-y-2">
+                        <ul className="space-y-2 max-h-[calc(120px)] overflow-y-scroll">
                             {files.map((file, index) => (
                                 <li
                                     key={index}

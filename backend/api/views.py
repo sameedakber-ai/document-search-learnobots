@@ -1,5 +1,9 @@
+import json
+
 from django.shortcuts import render
 from django.contrib.auth.models import User
+
+from .helpers import Neo4jNodes
 from .models import Document
 
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -32,7 +36,7 @@ class DocumentUploadView(APIView):
         serializer.is_valid(raise_exception=True)
 
         document = serializer.save()
-        loaded_document = DocumentProcessService.process_document(document=document)
+        # loaded_document = DocumentProcessService.process_document(document=document)
 
         serializer = DocumentSerializer(document)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -50,4 +54,80 @@ class ChatView(APIView):
 
         serializer = ChatSerializer(chat)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class NodeCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        neo4j = Neo4jNodes()
+        data = request.data
+
+        node_id = neo4j.create_node(
+            slug=data.get('slug'),
+            label=data.get("label", ""),
+            node_type=data.get("type", "documentLoader"),
+            canvas_id=data.get("canvas_id"),
+            user_id=request.user.id,
+            position_x=data.get("position_x"),
+            position_y=data.get("position_y"),
+        )
+
+        neo4j.close()
+        return Response({"node_id": node_id}, status=status.HTTP_201_CREATED)
+
+
+class EdgeCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        neo4j = Neo4jNodes()
+        data = request.data
+
+        print(data.get("source_id"))
+
+        edge_id = neo4j.create_edge(
+            user_id=request.user.id,
+            slug=data.get("slug"),
+            source_id=data.get("source_id"),
+            target_id=data.get("target_id"),
+        )
+
+        neo4j.close()
+        return Response({"edge_id": edge_id}, status=status.HTTP_201_CREATED)
+
+
+class NodeListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        neo4j = Neo4jNodes()
+        nodes = neo4j.get_nodes_by_user(request.user.id)
+        neo4j.close()
+
+        return Response(nodes, status=status.HTTP_200_OK)
+
+
+class EdgeListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        neo4j = Neo4jNodes()
+        edges = neo4j.get_all_edges(request.user.id)
+        neo4j.close()
+
+        print("edges: ", edges)
+
+        return Response(edges, status=status.HTTP_200_OK)
+
+
+class DocumentListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        documents = Document.objects.all()
+
+        serializer = DocumentSerializer(documents, many=True)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
 

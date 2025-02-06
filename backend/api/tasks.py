@@ -1,4 +1,6 @@
-from .models import ProcessingJob, ElementResult
+from collections import deque
+
+from .models import ProcessingJob, ElementResult, Edge, Node
 from .helpers import DocumentLoader, KnowledgeGenerator
 
 def load_elements(processing_job_id):
@@ -33,7 +35,6 @@ def generate_knowledge(processing_job_id):
         processing_job.fail()
 
     return documents
-
 
 
 

@@ -1,4 +1,7 @@
+from collections import deque
+
 from .helpers import DocumentLoader, KnowledgeGenerator, Neo4jGraph
+
 
 class DocumentProcessService:
 
@@ -59,6 +62,53 @@ class ChatService:
         chat.save()
 
         return chat
+
+
+# class CanvasService:
+#
+#     def get_root_nodes(self, canvas):
+#         """
+#         Returns all nodes in a canvas that have no incoming edges.
+#         """
+#         nodes_with_incoming_edges = Edge.objects.filter(canvas=canvas).values_list('target', flat=True)
+#         return Node.objects.filter(canvas=canvas).exclude(id__in=nodes_with_incoming_edges)
+#
+#
+#     def process_pipeline(self, canvas):
+#         """
+#         Processes the pipeline from root nodes to the last nodes.
+#         """
+#         # Step 1: Find all root nodes
+#         roots = self.get_root_nodes(canvas)
+#
+#         # Step 2: Prepare a queue (BFS-like traversal)
+#         queue = deque(roots)
+#         processed = set()
+#
+#         while queue:
+#             node = queue.popleft()
+#             if node.id in processed:
+#                 continue
+#
+#             print(f"Processing Node: {node.label} ({node.type})")
+#             self.process_node(node)  # Custom processing logic for each type
+#
+#             processed.add(node.id)
+#
+#             # Step 3: Add outgoing connected nodes
+#             for edge in node.outgoing_edges.all():
+#                 queue.append(edge.target)
+#
+#     def process_node(self, node):
+#         """
+#         Performs node-type specific processing.
+#         """
+#         if node.type == 'documentLoader':
+#             print(f"Loading document: {node.data.get('file_path', 'No file')}")
+#         elif node.type == 'textUpdater':
+#             print(f"Updating text: {node.data.get('transformation', 'No transformation')}")
+#         elif node.type == 'askAI':
+#             print(f"Asking AI: {node.data.get('prompt', 'No prompt')}")
 
 
 

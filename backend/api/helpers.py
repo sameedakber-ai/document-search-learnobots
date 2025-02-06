@@ -31,10 +31,10 @@ from unstructured.partition.image import partition_image
 
 from backend.utils.neo4j import get_driver
 
-OPENAI_API_KEY="REMOVED"
-OPENAI_CHAT_COMPLETION_MODEL='gpt-4o'
-OPENAI_IMAGE_DESCRIPTION_MODEL='gpt-4o-mini'
-OPENAI_EMBEDDING_MODEL='text-embedding-ada-002'
+OPENAI_API_KEY = "REMOVED"
+OPENAI_CHAT_COMPLETION_MODEL = 'gpt-4o'
+OPENAI_IMAGE_DESCRIPTION_MODEL = 'gpt-4o-mini'
+OPENAI_EMBEDDING_MODEL = 'text-embedding-ada-002'
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
@@ -43,11 +43,13 @@ class Element(BaseModel):
     text: Any
     metadata: dict
 
+
 class EntityNode(BaseModel):
     id: str
     label: str
     name: str
     properties: Optional[dict] = Field(default_factory=dict)
+
 
 class Relationship(BaseModel):
     type: str
@@ -59,17 +61,21 @@ class Relationship(BaseModel):
     def replace_special_chars_in_type(cls, v):
         return re.sub(r'[^a-zA-Z]', '_', v)
 
+
 class KnowledgeGraphData(BaseModel):
     entities: List[EntityNode]
     relationships: List[Relationship]
+
 
 class Document(BaseModel):
     text: Any
     knowledge: KnowledgeGraphData
     metadata: dict
 
+
 class NodeType(BaseModel):
     type: str
+
 
 class RelationshipType(BaseModel):
     type: str
@@ -77,6 +83,7 @@ class RelationshipType(BaseModel):
     @field_validator("type", mode="before")
     def replace_special_chars_in_type(cls, v):
         return re.sub(r'[^a-zA-Z]', '_', v)
+
 
 class DocumentNodeAndRelationshipTypes(BaseModel):
     entity_types: List[NodeType]
@@ -87,6 +94,7 @@ def get_upload_path(instance, filename):
     name, extension = os.path.splitext(filename)
     file_path = f'documents/{instance.name}{extension}'
     return file_path
+
 
 def get_chat_model(service, workspace):
     if service == 'azure':
@@ -113,8 +121,8 @@ def get_chat_model(service, workspace):
             temperature=workspace.temperature
         )
 
-def get_langchain_embedding_model(service):
 
+def get_langchain_embedding_model(service):
     if service == 'azure':
         return AzureOpenAIEmbeddings(
             model=os.getenv('AZURE_EMBEDDING_MODEL'),
@@ -581,7 +589,6 @@ class KnowledgeGenerator:
         unique_string = f"{entity.label}-{entity.name}-{json.dumps(entity.properties, sort_keys=True)}"
         return hashlib.md5(unique_string.encode('utf-8')).hexdigest()
 
-
     def generate_knowledge_graph(self, element: Element, types: DocumentNodeAndRelationshipTypes) -> KnowledgeGraphData:
         node_types = [i.type for i in types.entity_types]
         relationship_types = [i.type for i in types.relationship_types]
@@ -687,7 +694,6 @@ class KnowledgeGenerator:
                 retry_count += 1
 
         raise ValueError("Max retries exceeded for knowledge graph generation.")
-
 
     def generate_knowledge(self) -> KnowledgeGraphData:
         graph = Neo4jGraph()
@@ -1386,3 +1392,130 @@ class Neo4jGraph:
         traverse_documents(seed_document_ids, 0)
         return final_documents
 
+
+class Neo4jNodes:
+    def __init__(self):
+        self.driver = get_driver()
+
+    def close(self):
+        self.driver.close()
+
+    # Delete all nodes and relationships
+    def delete_all_data(self):
+        with self.driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
+        self.close()
+
+    def query(self, cypher_query, parameters=None):
+        with self.driver.session() as session:
+            return session.run(cypher_query, parameters or {})
+
+    def create_node(self, slug, label, node_type, canvas_id, user_id, position_x, position_y):
+        with self.driver.session() as session:
+            result = session.run(
+                "CREATE (n:Node {label: $label, slug: $slug, type: $node_type, canvas_id: $canvas_id, user_id: $user_id, position_x: $position_x, position_y: $position_y}) RETURN id(n)",
+                slug=slug, label=label, node_type=node_type, canvas_id=canvas_id, user_id=user_id, position_x=position_x, position_y=position_y
+            )
+            return result.single()[0]
+
+    def create_edge(self, slug, source_id, target_id, user_id):
+        with self.driver.session() as session:
+            print(f"Creating edge: {slug}, {source_id} -> {target_id}, user_id: {user_id}")
+            result = session.run(
+                "MATCH (a:Node {slug: $source_id}), (b:Node {slug: $target_id}) "
+                "WHERE a.user_id = $user_id AND b.user_id = $user_id "
+                "CREATE (a)-[r:CONNECTED {slug: $slug, user_id: $user_id}]->(b) RETURN id(r)",
+                source_id=source_id, target_id=target_id, user_id=user_id, slug=slug
+            )
+            return result.single()[0]
+
+    def get_nodes_by_user(self, user_id):
+        with self.driver.session() as session:
+            result = session.run(
+                "MATCH (n:Node) WHERE n.user_id = $user_id RETURN id(n) AS id, n.type AS type, n.label AS label, n.canvas_id AS canvas_id, n.position_x AS position_x, n.position_y AS position_y, n.slug AS slug",
+                user_id=user_id
+            )
+            return [record.data() for record in result]
+
+    def get_all_edges(self, user_id):
+        with self.driver.session() as session:
+            result = session.run(
+                "MATCH (a:Node)-[r:CONNECTED]->(b:Node) RETURN a.slug AS source_id, b.slug AS target_id, r.slug AS slug"
+            )
+            return [record.data() for record in result]
+
+    def get_root_nodes(self, canvas_id):
+        query = """
+        MATCH (n:Node)
+        WHERE NOT (n)<-[:CONNECTED_TO]-() AND n.canvas_id = $canvas_id
+        RETURN id(n) AS node_id, n.label AS label
+        """
+        return self.query(query, {"canvas_id": canvas_id}).data()
+
+    def get_execution_order(self, canvas_id):
+        query = """
+        MATCH path = (n:Node)-[:CONNECTED_TO*]->(m:Node)
+        WHERE n.canvas_id = $canvas_id
+        WITH collect(path) AS paths
+        RETURN paths
+        """
+        return self.query(query, {"canvas_id": canvas_id}).data()
+
+    def process_pipeline(self, canvas_id):
+        from collections import deque
+        root_nodes = self.get_root_nodes(canvas_id)
+        queue = deque(root_nodes)
+        processed = set()
+
+        while queue:
+            node = queue.popleft()
+            if node["node_id"] in processed:
+                continue
+
+            self.process_node(node)
+            processed.add(node["node_id"])
+
+            query = """
+            MATCH (n)-[:CONNECTED_TO]->(m)
+            WHERE id(n) = $node_id
+            RETURN id(m) AS next_node
+            """
+            next_nodes = self.query(query, {"node_id": node["node_id"]}).data()
+            for next_node in next_nodes:
+                queue.append(next_node)
+
+    def process_node(self, node):
+        print(f"Processing Node: {node['label']}")
+
+    def process_pipeline_with_merging(self, canvas_id):
+        from collections import deque
+        query = """
+        MATCH (n:Node)-[:CONNECTED_TO]->(m:Node)
+        WHERE n.canvas_id = $canvas_id
+        RETURN id(n) AS parent, id(m) AS child
+        """
+        edges = self.query(query, {"canvas_id": canvas_id}).data()
+
+        dependency_count = {}
+        for edge in edges:
+            dependency_count[edge["child"]] = dependency_count.get(edge["child"], 0) + 1
+
+        queue = deque(self.get_root_nodes(canvas_id))
+        processed = set()
+
+        while queue:
+            node = queue.popleft()
+            self.process_node(node)
+            processed.add(node["node_id"])
+
+            query = """
+            MATCH (n)-[:CONNECTED_TO]->(m)
+            WHERE id(n) = $node_id
+            RETURN id(m) AS next_node
+            """
+            next_nodes = self.query(query, {"node_id": node["node_id"]}).data()
+
+            for next_node in next_nodes:
+                dependency_count[next_node["next_node"]] -= 1
+                if dependency_count[next_node["next_node"]] == 0:
+                    queue.append(next_node)
