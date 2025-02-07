@@ -1413,10 +1413,32 @@ class Neo4jNodes:
     def create_node(self, slug, label, node_type, canvas_id, user_id, position_x, position_y):
         with self.driver.session() as session:
             result = session.run(
-                "CREATE (n:Node {label: $label, slug: $slug, type: $node_type, canvas_id: $canvas_id, user_id: $user_id, position_x: $position_x, position_y: $position_y}) RETURN id(n)",
-                slug=slug, label=label, node_type=node_type, canvas_id=canvas_id, user_id=user_id, position_x=position_x, position_y=position_y
+                "CREATE (n:Node {label: $label, slug: $slug, type: $node_type, canvas_id: $canvas_id, user_id: $user_id, position_x: $position_x, position_y: $position_y, image_model: $image_model, temperature: $temperature, extract_images: $extract_images}) RETURN id(n)",
+                slug=slug, label=label, node_type=node_type, canvas_id=canvas_id, user_id=user_id, position_x=position_x, position_y=position_y, image_model='gpt-3o', temperature=1, extract_images=False
             )
             return result.single()[0]
+
+    def update_node(self, slug: str, data: dict):
+        """
+        Update a node's properties based on the given data dictionary.
+        The node is identified by its unique slug.
+
+        :param slug: The unique slug of the node to update.
+        :param data: A dictionary containing the properties to update (e.g., label, image_model).
+        :return: The updated node's id.
+        """
+        with self.driver.session() as session:
+            result = session.run(
+                """
+                MATCH (n:Node {slug: $slug})
+                SET n += $data
+                RETURN id(n) AS node_id
+                """,
+                slug=slug,
+                data=data
+            )
+            return result.single()[0]
+
 
     def create_edge(self, slug, source_id, target_id, user_id):
         with self.driver.session() as session:
@@ -1429,10 +1451,17 @@ class Neo4jNodes:
             )
             return result.single()[0]
 
+    def delete_node(self, slug: str) -> None:
+        with self.driver.session() as session:
+            session.run(
+                "MATCH (n:Node {slug: $slug}) DETACH DELETE n",
+                slug=slug
+            )
+
     def get_nodes_by_user(self, user_id):
         with self.driver.session() as session:
             result = session.run(
-                "MATCH (n:Node) WHERE n.user_id = $user_id RETURN id(n) AS id, n.type AS type, n.label AS label, n.canvas_id AS canvas_id, n.position_x AS position_x, n.position_y AS position_y, n.slug AS slug",
+                "MATCH (n:Node) WHERE n.user_id = $user_id RETURN id(n) AS id, n.type AS type, n.label AS label, n.canvas_id AS canvas_id, n.position_x AS position_x, n.position_y AS position_y, n.slug AS slug, n.image_model AS image_model, n.temperature AS temperature, n.extract_images AS extract_images",
                 user_id=user_id
             )
             return [record.data() for record in result]

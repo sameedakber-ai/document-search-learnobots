@@ -29,6 +29,9 @@ interface NodeData {
     label: string;
     position_x: number;
     position_y: number;
+    image_model: string;
+    temperature: number;
+    extract_images: boolean;
 }
 
 interface EdgeData {
@@ -87,11 +90,33 @@ const LayoutFlow: React.FC = () => {
     const [nodeName, setNodeName] = useState<string>('');
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+    const [pendingChanges, setPendingChanges] = useState<Record<string, Partial<DocumentUploaderData>>>({});
 
     useEffect(() => {
         getNodes();
         getEdges();
     }, []);
+
+    const handleNodeChange = useCallback((nodeId: string, changes: Partial<DocumentUploaderData>) => {
+        setPendingChanges((prev) => ({
+            ...prev,
+            [nodeId]: {
+                ...prev[nodeId],
+                ...changes,
+            },
+        }));
+    }, []);
+
+    // Delete node callback passed to node components
+    const handleDeleteNode = useCallback((nodeId: string) => {
+        // Optionally, call your backend API to delete the node
+        api
+            .delete(`/api/node/${nodeId}/delete/`)
+            .then(() => {
+                setNodes((nds) => nds.filter((node) => node.id !== nodeId));
+            })
+            .catch((error) => alert(error));
+    }, [setNodes]);
 
     const getNodes = (): void => {
         api
@@ -103,7 +128,14 @@ const LayoutFlow: React.FC = () => {
                     const newNode: Node = {
                         id: nodeData.slug,
                         type: nodeData.type,
-                        data: {label: nodeData.label},
+                        data: {
+                            label: nodeData.label,
+                            imageModel: nodeData.image_model,
+                            onChange: handleNodeChange,
+                            onDelete: handleDeleteNode,
+                            temperature: nodeData.temperature,
+                            extractImages: nodeData.extract_images
+                        },
                         position: {x: nodeData.position_x, y: nodeData.position_y},
                     };
                     setNodes((prevNodes) => [...prevNodes, newNode]);
@@ -187,10 +219,6 @@ const LayoutFlow: React.FC = () => {
         [edges, setEdges]
     );
 
-    const handleNodeChange = (e: ChangeEvent<HTMLInputElement>): void => {
-        setNodeName(e.target.value);
-    };
-
     const setNewNode = (e: FormEvent<HTMLFormElement>): void => {
         e.preventDefault();
         const slug = uuidv4();
@@ -208,7 +236,14 @@ const LayoutFlow: React.FC = () => {
                 const newNode: Node = {
                     id: slug,
                     type: nodeName,
-                    data: {label: nodeName || 'New Node'},
+                    data: {
+                        label: nodeName || 'New Node',
+                        onChange: handleNodeChange,
+                        onDelete: handleDeleteNode,
+                        imageModel: 'gpt-3o',
+                        temperature: 1,
+                        extractImages: false
+                    },
                     position: {x: 0, y: 0},
                 };
                 setNodes((prevNodes) => [...prevNodes, newNode]);
@@ -226,8 +261,20 @@ const LayoutFlow: React.FC = () => {
     //   setEdges([...layoutedEdges]);
     // }, [nodes, edges, setNodes, setEdges]);
 
-    const handleSaveSettings = (e: FormEvent<HTMLFormElement>): void => {
-        e.preventDefault();
+    const handleSaveSettings = useCallback(() => {
+        // Iterate over pendingChanges and save them
+        Object.entries(pendingChanges).forEach(([nodeId, changes]) => {
+            api.post(`/api/node/${nodeId}/update/`, {...changes})
+                .then((res) => res.data)
+                .then((data) => console.log(`Saved node ${nodeId}: `, data))
+                .catch((error) => console.error(error));
+        });
+        // Optionally clear pending changes after saving
+        setPendingChanges({});
+    }, [pendingChanges]);
+
+    const handleNodeNameChange = (e: ChangeEvent<HTMLInputElement>): void => {
+        setNodeName(e.target.value);
     };
 
     return (
@@ -239,7 +286,7 @@ const LayoutFlow: React.FC = () => {
                             className="p-2 rounded-md border-2 border-gray-500"
                             type="text"
                             value={nodeName}
-                            onChange={handleNodeChange}
+                            onChange={handleNodeNameChange}
                             placeholder="Enter node type"
                         />
                         <button className="p-2 bg-black text-white text-sm rounded-md" type="submit">
@@ -249,6 +296,7 @@ const LayoutFlow: React.FC = () => {
                 </form>
                 <button
                     className="px-4 py-3 rounded-lg bg-gray-200 hover:bg-gray-400"
+                    onClick={handleSaveSettings}
                 >
                     Save
                 </button>

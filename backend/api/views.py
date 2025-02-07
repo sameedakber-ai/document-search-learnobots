@@ -76,6 +76,29 @@ class NodeCreateView(APIView):
         neo4j.close()
         return Response({"node_id": node_id}, status=status.HTTP_201_CREATED)
 
+class NodeDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, slug, *args, **kwargs):
+        neo4j = Neo4jNodes()
+        data = request.data
+
+        neo4j.delete_node(slug=slug)
+        return Response({"message": "Node deleted successfully"}, status=status.HTTP_200_OK)
+
+
+class NodeUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, slug, *args, **kwargs):
+        neo4j = Neo4jNodes()
+        data = request.data
+
+        node_id = neo4j.update_node(slug=slug, data=data)
+        return Response({"message": "Node updated successfully"}, status=status.HTTP_200_OK)
+
+
+
 
 class EdgeCreateView(APIView):
     permission_classes = [IsAuthenticated]
@@ -104,6 +127,8 @@ class NodeListView(APIView):
         neo4j = Neo4jNodes()
         nodes = neo4j.get_nodes_by_user(request.user.id)
         neo4j.close()
+
+        print(nodes)
 
         return Response(nodes, status=status.HTTP_200_OK)
 
