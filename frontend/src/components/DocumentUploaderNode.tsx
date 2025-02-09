@@ -2,14 +2,17 @@ import {
     ChangeEvent,
     useCallback,
     useState,
-    FC,
+    FC, useEffect,
 } from 'react';
 import {Handle, Position, NodeProps} from '@xyflow/react';
 import {createPortal} from 'react-dom';
 import DocumentUploaderModal from './DocumentUploaderModal';
+import api from "../api.ts";
+import {DocumentType} from "./CustomLessonFlow.tsx";
 
 export interface DocumentUploaderData {
     label: string;
+    documents: DocumentType[];
     onDelete?: (nodeId: string) => void;
     onChange?: (nodeId: string, changes: Partial<DocumentUploaderData>) => void;
 }
@@ -19,6 +22,7 @@ interface DocumentUploaderNodeProps extends NodeProps<DocumentUploaderData> {
 
 const DocumentUploaderNode: FC<DocumentUploaderNodeProps> = ({id, data}) => {
     const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+
     const [imageModel, setImageModel] = useState<string>(data.imageModel);
     const [temperature, setTemperature] = useState<string>(data.temperature);
     const [extractImages, setExtractImages] = useState<string>(data.extractImages);
@@ -38,16 +42,15 @@ const DocumentUploaderNode: FC<DocumentUploaderNodeProps> = ({id, data}) => {
     //         .catch((error) => alert(error));
     // }, [id]);
 
-    const handleSubmitProblems = useCallback((problems: string[]): void => {
-        console.log('Problems:', problems);
-        // Handle the submitted problems here (send them to the backend or process them)
-    }, []);
-
     const handleDeleteClick = useCallback((): void => {
         if (data.onDelete) {
             data.onDelete(id);
         }
     }, [data, id]);
+
+    useEffect(() => {
+        console.log(data.documents);
+    }, []);
 
     const onImageModelChange = useCallback((evt: ChangeEvent<HTMLInputElement>): void => {
         const updatedImageModel = evt.target.value;
@@ -256,7 +259,7 @@ const DocumentUploaderNode: FC<DocumentUploaderNodeProps> = ({id, data}) => {
                     id={id}
                     isOpen={isModalOpen}
                     onClose={handleCloseModal}
-                    onSubmit={handleSubmitProblems}
+                    documents={data.documents}
                 />,
                 document.body
             )}

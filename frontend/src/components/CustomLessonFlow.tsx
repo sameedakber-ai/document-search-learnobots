@@ -32,12 +32,20 @@ interface NodeData {
     image_model: string;
     temperature: number;
     extract_images: boolean;
+    documents: DocumentType[];
 }
 
 interface EdgeData {
     slug: string;
     source_id: string;
     target_id: string;
+}
+
+export interface DocumentType {
+    id: string;
+    name: string;
+    date: string;
+    extension: string;
 }
 
 const initialNodes: Node[] = [];
@@ -91,11 +99,33 @@ const LayoutFlow: React.FC = () => {
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
     const [pendingChanges, setPendingChanges] = useState<Record<string, Partial<DocumentUploaderData>>>({});
+    const [documents, setDocuments] = useState<DocumentType[]>([])
+
+    const getDocuments = (): void => {
+        api.get('/api/documents/')
+            .then((res) => res.data)
+            .then((data: any[]) => {
+                const docs: DocumentType[] = data.map((docData: any) => ({
+                    id: docData.id,
+                    name: docData.name,
+                    date: docData.date,
+                    extension: docData.file.split('.').pop() || '',
+                }));
+                setDocuments(docs); // This will trigger a re-render with the new documents
+            })
+            .catch((error: unknown) => console.log(error));
+    };
 
     useEffect(() => {
-        getNodes();
-        getEdges();
+        getDocuments();
     }, []);
+
+    useEffect(() => {
+        if (documents.length > 0) {
+            getNodes();
+            getEdges();
+        }
+    }, [documents]);
 
     const handleNodeChange = useCallback((nodeId: string, changes: Partial<DocumentUploaderData>) => {
         setPendingChanges((prev) => ({
@@ -123,6 +153,7 @@ const LayoutFlow: React.FC = () => {
             .get('/api/nodes/')
             .then((res) => res.data)
             .then((data: NodeData[]) => {
+                console.log('documents get: ' + documents);
                 setNodes([]);
                 data.forEach((nodeData) => {
                     const newNode: Node = {
@@ -134,7 +165,9 @@ const LayoutFlow: React.FC = () => {
                             onChange: handleNodeChange,
                             onDelete: handleDeleteNode,
                             temperature: nodeData.temperature,
-                            extractImages: nodeData.extract_images
+                            extractImages: nodeData.extract_images,
+                            documents: documents
+
                         },
                         position: {x: nodeData.position_x, y: nodeData.position_y},
                     };
@@ -233,6 +266,7 @@ const LayoutFlow: React.FC = () => {
             })
             .then((res) => res.data)
             .then(() => {
+                console.log('documents set: ' + documents);
                 const newNode: Node = {
                     id: slug,
                     type: nodeName,
@@ -242,7 +276,8 @@ const LayoutFlow: React.FC = () => {
                         onDelete: handleDeleteNode,
                         imageModel: 'gpt-3o',
                         temperature: 1,
-                        extractImages: false
+                        extractImages: false,
+                        documents: documents
                     },
                     position: {x: 0, y: 0},
                 };

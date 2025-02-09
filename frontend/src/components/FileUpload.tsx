@@ -1,9 +1,13 @@
-import React, {useState} from "react";
+import React, {FC, useState} from "react";
 import {X} from "lucide-react";
 import api from "../api.ts";
 import {ACCESS_TOKEN, REFRESH_TOKEN} from "../constants";
 
-const FileUpload = () => {
+interface FileUploadProps {
+    id: string;
+}
+
+const FileUpload: FC<FileUploadProps> = (id) => {
     const [files, setFiles] = useState([]);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [isUploading, setIsUploading] = useState(false);
@@ -23,6 +27,7 @@ const FileUpload = () => {
             const file = files[i];
             const formData = new FormData();
             formData.append('file', file);
+            formData.append('nodeId', id);
 
             // Simulating file upload progress
             await new Promise((resolve) => {
@@ -41,6 +46,7 @@ const FileUpload = () => {
                         'Content-Type': 'multipart/form-data',
                     },
                 }); // Use await for the API call
+
 
             } catch (error: any) {
                 alert(error.message || "An error occurred"); // Handle errors
