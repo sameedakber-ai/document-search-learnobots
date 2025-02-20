@@ -1,52 +1,68 @@
-import {useEffect, useState, useCallback, FC, ChangeEvent, MouseEvent} from 'react';
+import {useEffect, useState, useCallback, FC, MouseEvent, ChangeEvent} from 'react';
 import {createPortal} from 'react-dom';
-import api from '../api';
 import FileUpload from './FileUpload';
+import {DocumentType} from "./CustomLessonFlow";
 
 interface ModalProps {
     isOpen: boolean;
     onClose: () => void;
     id: string;
     documents: DocumentType[];
-    // onDocumentsChange: (docs: DocumentType[]) => void;
+    onDocumentsChange?: () => void;
+    selectedDocuments: DocumentType[];
+    onChange?: (docs: DocumentType[]) => void;
 }
 
 const DocumentUploaderModal: FC<ModalProps> = ({
                                                    isOpen,
                                                    onClose,
                                                    id,
-                                                   documents
+                                                   documents,
+                                                   onDocumentsChange,
+                                                   selectedDocuments,
+                                                   onChange
                                                }) => {
     const [showFileSelector, setShowFileSelector] = useState<boolean>(false);
     const [localDocuments, setLocalDocuments] = useState<DocumentType[]>(documents);
+    const [localSelectedDocuments, setLocalSelectedDocuments] = useState<DocumentType[]>(selectedDocuments);
+
 
     useEffect(() => {
         setLocalDocuments(documents);
-    }, [documents]);
-
-    useEffect(() => {
-        console.log(documents);
-    }, [documents]);
+        setLocalSelectedDocuments(localSelectedDocuments)
+    }, [documents, localSelectedDocuments]);
 
     const handleOpenFileSelector = useCallback((e: MouseEvent<HTMLButtonElement>): void => {
         e.preventDefault();
         setShowFileSelector((prev) => !prev);
     }, []);
 
-    // const handleCheckboxChange = useCallback(
-    //     (evt: ChangeEvent<HTMLInputElement>): void => {
-    //         const docId = evt.target.value;
-    //         const checked = evt.target.checked;
-    //         let updatedSelection: string[];
-    //         if (checked) {
-    //             updatedSelection = [...selectedDocuments, docId];
-    //         } else {
-    //             updatedSelection = selectedDocuments.filter((id) => id !== docId);
-    //         }
-    //         onDocumentsChange(updatedSelection);
-    //     },
-    //     [selectedDocuments, onDocumentsChange]
-    // );
+    const handleCheckboxChange = (e: ChangeEvent<HTMLInputElement>, document: DocumentType) => {
+        setLocalSelectedDocuments(prev => {
+            const updatedSelectedDocuments = Array.isArray(prev) ? [...prev] : [];
+
+            if (e.target.checked) {
+                if (!updatedSelectedDocuments.some(doc => doc.id === document.id)) {
+                    updatedSelectedDocuments.push(document);
+                }
+            } else {
+                return updatedSelectedDocuments.filter(doc => doc.id !== document.id);
+            }
+
+            return updatedSelectedDocuments;
+        });
+
+        // Compute new state manually based on the current event
+        const newValue = e.target.checked
+            ? [...localSelectedDocuments, document]
+            : localSelectedDocuments.filter(doc => doc.id !== document.id);
+
+        console.log("New computed value:", newValue);
+        if (onChange) {
+            onChange(newValue);
+        }
+    };
+
 
     // If the modal is not open, render nothing.
     if (!isOpen) {
@@ -124,6 +140,8 @@ const DocumentUploaderModal: FC<ModalProps> = ({
                                         type="checkbox"
                                         className="w-5 h-5 rounded-xl mt-2"
                                         value={document.id}
+                                        checked={localSelectedDocuments?.some(selected => selected.id === document.id) ?? false}
+                                        onChange={(e) => handleCheckboxChange(e, document)}
                                     />
                                 </td>
                             </tr>
@@ -157,7 +175,7 @@ const DocumentUploaderModal: FC<ModalProps> = ({
                     </div>
                 </button>
 
-                {showFileSelector && <FileUpload id={id}/>}
+                {showFileSelector && <FileUpload id={id} onDocumentsChange={onDocumentsChange}/>}
             </div>
         </div>,
         document.body

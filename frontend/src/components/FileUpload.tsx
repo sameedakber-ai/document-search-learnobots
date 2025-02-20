@@ -1,19 +1,19 @@
-import React, {FC, useState} from "react";
+import {ChangeEvent, FC, useState} from "react";
 import {X} from "lucide-react";
 import api from "../api.ts";
-import {ACCESS_TOKEN, REFRESH_TOKEN} from "../constants";
 
 interface FileUploadProps {
     id: string;
+    onDocumentsChange?: () => void;
 }
 
-const FileUpload: FC<FileUploadProps> = (id) => {
-    const [files, setFiles] = useState([]);
+const FileUpload: FC<FileUploadProps> = ({id, onDocumentsChange}) => {
+    const [files, setFiles] = useState<File[]>([]);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [isUploading, setIsUploading] = useState(false);
 
-    const handleFileChange = (e) => {
-        const selectedFiles = Array.from(e.target.files);
+    const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+        const selectedFiles = Array.from(e.target.files || []);
         setFiles((prev) => [...prev, ...selectedFiles]);
     };
 
@@ -30,7 +30,7 @@ const FileUpload: FC<FileUploadProps> = (id) => {
             formData.append('nodeId', id);
 
             // Simulating file upload progress
-            await new Promise((resolve) => {
+            await new Promise<void>((resolve) => {
                 const interval = setInterval(() => {
                     totalProgress += 100 / (files.length * 10); // Simulate 10 steps per file
                     setUploadProgress(Math.min(totalProgress, 100));
@@ -41,21 +41,30 @@ const FileUpload: FC<FileUploadProps> = (id) => {
                 }, 100);
             });
             try {
-                const res = await api.post('/api/upload/', formData, {
+                await api.post('/api/upload/', formData, {
                     headers: {
                         'Content-Type': 'multipart/form-data',
                     },
-                }); // Use await for the API call
-
-
-            } catch (error: any) {
-                alert(error.message || "An error occurred"); // Handle errors
+                });
+            } catch (error) {
+                alert(error || "An error occurred");
             }
         }
 
         setIsUploading(false);
         setUploadProgress(0);
         setFiles([]);
+
+        // After uploading, fetch updated documents from the backend
+        try {
+            await api.get("/api/documents/");
+            if (onDocumentsChange) {
+                onDocumentsChange();
+            }
+        } catch (error) {
+            console.error("Error fetching updated documents:", error);
+        }
+
     };
 
     const cancelUpload = () => {
@@ -64,7 +73,7 @@ const FileUpload: FC<FileUploadProps> = (id) => {
         setFiles([]);
     };
 
-    const removeFile = (index) => {
+    const removeFile = (index: number) => {
         const updatedFiles = files.filter((_, i) => i !== index);
         setFiles(updatedFiles);
     };

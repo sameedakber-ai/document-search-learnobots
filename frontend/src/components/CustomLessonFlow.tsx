@@ -13,34 +13,14 @@ import {
     addEdge,
     Node,
     Edge,
-    OnConnectParams,
 } from '@xyflow/react';
-import TextUpdaterNode from './TextUpdaterNode';
 import DocumentUploaderNode from './DocumentUploaderNode';
 import AskAINode from './AskAINode';
 import {v4 as uuidv4} from 'uuid';
-import dagre from "dagre";
 import '@xyflow/react/dist/style.css';
 import api from '../api';
 
-interface NodeData {
-    slug: string;
-    type: string;
-    label: string;
-    position_x: number;
-    position_y: number;
-    image_model: string;
-    temperature: number;
-    extract_images: boolean;
-    documents: DocumentType[];
-}
-
-interface EdgeData {
-    slug: string;
-    source_id: string;
-    target_id: string;
-}
-
+// Types for your document, node data (from backend) and node component data:
 export interface DocumentType {
     id: string;
     name: string;
@@ -48,86 +28,115 @@ export interface DocumentType {
     extension: string;
 }
 
+export interface DocumentResponse {
+    id: string;
+    name: string;
+    date: string;
+    file: string;
+}
+
+export interface NodeData {
+    slug: string;
+    type: string;
+    label: string;
+    position_x: number;
+    position_y: number;
+    imageModel: string;
+    temperature: number;
+    extractImages: boolean;
+    documents: DocumentType[];
+    selectedDocuments: DocumentType[];
+    canvasId: string;
+    nodeType: string;
+    onChange: (nodeId: string, changes: Partial<NodeData>) => void;
+    onDelete: (nodeId: string) => void;
+    onDocumentsChange: () => void;
+    aiModel: string;
+    prompt: string;
+    context: string;
+}
+
+export interface EdgeData {
+    slug: string;
+    source_id: string;
+    target_id: string;
+}
+
+// This is the type for the data prop used by nodes like DocumentUploaderNode
+export interface DocumentUploaderData {
+    label: string;
+    imageModel: string;
+    temperature: number;
+    extractImages: boolean;
+    documents: DocumentType[];
+    type: string;
+    position_x: number;
+    position_y: number;
+    canvasId: number;
+    onChange?: (nodeId: string, changes: Partial<DocumentUploaderData>) => void;
+    onDelete?: (nodeId: string) => void;
+    onDocumentsChange?: (docs: DocumentType[]) => void;
+    selectedDocuments: DocumentType[];
+}
+
+interface OnConnectParams {
+    source: string;
+    target: string;
+}
+
 const initialNodes: Node[] = [];
 const initialEdges: Edge[] = [];
 
 const nodeTypes = {
-    textUpdater: TextUpdaterNode,
     documentLoader: DocumentUploaderNode,
     askAI: AskAINode,
 };
 
-const dagreGraph = new dagre.graphlib.Graph();
-dagreGraph.setDefaultEdgeLabel(() => ({}));
+type NodeType = 'documentLoader' | 'askAI';
 
-// const getLayoutedElements = (
-//     nodes: Node[],
-//     edges: Edge[],
-//     direction: 'TB' | 'LR' = 'TB'
-// ): { nodes: Node[]; edges: Edge[] } => {
-//     const nodeWidth = 172;
-//     const nodeHeight = 36;
-//
-//     dagreGraph.setGraph({rankdir: direction});
-//
-//     nodes.forEach((node) => {
-//         dagreGraph.setNode(node.id, {width: nodeWidth, height: nodeHeight});
-//     });
-//
-//     edges.forEach((edge) => {
-//         dagreGraph.setEdge(edge.source, edge.target);
-//     });
-//
-//     dagre.layout(dagreGraph);
-//
-//     const layoutedNodes = nodes.map((node) => {
-//         const nodeWithPosition = dagreGraph.node(node.id);
-//         return {
-//             ...node,
-//             position: {
-//                 x: nodeWithPosition.x - nodeWidth / 2,
-//                 y: nodeWithPosition.y - nodeHeight / 2,
-//             },
-//         };
-//     });
-//
-//     return {nodes: layoutedNodes, edges};
-// };
+interface DynamicDefaults {
+    documents: DocumentType[];
+    onChange: (nodeId: string, changes: Partial<NodeData>) => void;
+    onDelete: (nodeId: string) => void;
+    onDocumentsChange: () => void;
+}
+
+function getNodeTypeDefaults(nodeType: NodeType, dynamic: DynamicDefaults): Partial<NodeData> {
+    switch (nodeType) {
+        case 'documentLoader':
+            return {
+                imageModel: 'gpt-3o',
+                temperature: 1,
+                extractImages: false,
+                documents: dynamic.documents,
+                selectedDocuments: [],
+                onChange: dynamic.onChange,
+                onDelete: dynamic.onDelete,
+                onDocumentsChange: dynamic.onDocumentsChange,
+            };
+        case 'askAI':
+            return {
+                aiModel: 'gpt-4o',
+                temperature: 1,
+                context: "This is some context",
+                prompt: "This is a prompt",
+                onChange: dynamic.onChange,
+                onDelete: dynamic.onDelete,
+                onDocumentsChange: dynamic.onDocumentsChange,
+            };
+        default:
+            return {};
+    }
+}
 
 const LayoutFlow: React.FC = () => {
     const [nodeName, setNodeName] = useState<string>('');
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
     const [pendingChanges, setPendingChanges] = useState<Record<string, Partial<DocumentUploaderData>>>({});
-    const [documents, setDocuments] = useState<DocumentType[]>([])
+    const [documents, setDocuments] = useState<DocumentType[]>([]);
 
-    const getDocuments = (): void => {
-        api.get('/api/documents/')
-            .then((res) => res.data)
-            .then((data: any[]) => {
-                const docs: DocumentType[] = data.map((docData: any) => ({
-                    id: docData.id,
-                    name: docData.name,
-                    date: docData.date,
-                    extension: docData.file.split('.').pop() || '',
-                }));
-                setDocuments(docs); // This will trigger a re-render with the new documents
-            })
-            .catch((error: unknown) => console.log(error));
-    };
-
-    useEffect(() => {
-        getDocuments();
-    }, []);
-
-    useEffect(() => {
-        if (documents.length > 0) {
-            getNodes();
-            getEdges();
-        }
-    }, [documents]);
-
-    const handleNodeChange = useCallback((nodeId: string, changes: Partial<DocumentUploaderData>) => {
+    const handleNodeChange = useCallback((nodeId: string, changes: Partial<DocumentUploaderData>): void => {
         setPendingChanges((prev) => ({
             ...prev,
             [nodeId]: {
@@ -137,9 +146,7 @@ const LayoutFlow: React.FC = () => {
         }));
     }, []);
 
-    // Delete node callback passed to node components
-    const handleDeleteNode = useCallback((nodeId: string) => {
-        // Optionally, call your backend API to delete the node
+    const handleDeleteNode = useCallback((nodeId: string): void => {
         api
             .delete(`/api/node/${nodeId}/delete/`)
             .then(() => {
@@ -148,169 +155,201 @@ const LayoutFlow: React.FC = () => {
             .catch((error) => alert(error));
     }, [setNodes]);
 
-    const getNodes = (): void => {
-        api
-            .get('/api/nodes/')
-            .then((res) => res.data)
-            .then((data: NodeData[]) => {
-                console.log('documents get: ' + documents);
-                setNodes([]);
-                data.forEach((nodeData) => {
-                    const newNode: Node = {
-                        id: nodeData.slug,
-                        type: nodeData.type,
-                        data: {
-                            label: nodeData.label,
-                            imageModel: nodeData.image_model,
-                            onChange: handleNodeChange,
-                            onDelete: handleDeleteNode,
-                            temperature: nodeData.temperature,
-                            extractImages: nodeData.extract_images,
-                            documents: documents
+    // Fetch documents, nodes, and edges sequentially so that documents are loaded before nodes are created.
+    const getDocuments = useCallback(async (): Promise<DocumentType[]> => {
+        try {
+            const res = await api.get('/api/documents/');
+            const docs: DocumentType[] = res.data.map((docData: DocumentResponse) => ({
+                id: docData.id,
+                name: docData.name,
+                date: docData.date,
+                extension: docData.file.split('.').pop() || '',
+            }));
+            setDocuments(docs);
+            return docs;
+        } catch (error) {
+            console.error('Error fetching documents:', error);
+            return [];
+        }
+    }, []);
 
-                        },
-                        position: {x: nodeData.position_x, y: nodeData.position_y},
-                    };
-                    setNodes((prevNodes) => [...prevNodes, newNode]);
-                });
-            })
-            .catch((error: unknown) => console.log(error));
-    };
+    const reloadNodeDocuments = useCallback(async (): Promise<void> => {
+        try {
+            const docs = await getDocuments();
 
-    const getEdges = (): void => {
-        api
-            .get('/api/edges/')
-            .then((res) => res.data)
-            .then((data: EdgeData[]) => {
-                data.forEach((edgeData) => {
-                    const newEdge: Edge = {
-                        id: edgeData.slug,
-                        source: edgeData.source_id,
-                        target: edgeData.target_id,
-                        animated: true,
-                        style: {stroke: '#f6ab6c', strokeDasharray: '10,10'},
-                    };
-                    setEdges((prevEdges) => [...prevEdges, newEdge]);
-                });
-            })
-            .catch((error: unknown) => console.log(error));
-    };
+            setNodes((prevNodes) =>
+                prevNodes.map(node => ({
+                    ...node,
+                    data: {
+                        ...node.data,
+                        documents: docs, // Update only the documents array
+                    },
+                }))
+            );
 
-    const onConnect = useCallback(
-        (params: OnConnectParams) => {
-            const {source, target} = params;
+        } catch (error) {
+            console.error("Error reloading node documents:", error);
+        }
+    }, [getDocuments, setNodes]);
 
-            // Helper function to check if a circular edge is created
-            const isCircular = (sourceId: string, targetId: string, edges: Edge[]): boolean => {
-                const visited = new Set<string>();
-                const stack = [targetId];
+    const getNodes = useCallback(async (docs: DocumentType[]): Promise<void> => {
+        try {
+            const res = await api.get('/api/nodes/');
+            const data = res.data as NodeData[];
+            const newNodes: Node[] = data.map((nodeData: NodeData) => ({
+                id: nodeData.slug,
+                type: nodeData.type,
+                data: {
+                    ...nodeData,
+                    documents: docs,
+                    onChange: handleNodeChange,
+                    onDelete: handleDeleteNode,
+                    onDocumentsChange: reloadNodeDocuments,
+                },
+                position: {x: nodeData.position_x, y: nodeData.position_y},
+            }));
+            setNodes(newNodes);
+        } catch (error) {
+            console.error('Error fetching nodes:', error);
+        }
+    }, [setNodes, handleNodeChange, handleDeleteNode, reloadNodeDocuments]);
 
-                while (stack.length > 0) {
-                    const current = stack.pop();
-                    if (current === sourceId) {
-                        return true;
+    const getEdges = useCallback(async (): Promise<void> => {
+        try {
+            const res = await api.get('/api/edges/');
+            const data = res.data as EdgeData[];
+            const newEdges: Edge[] = data.map((edgeData: EdgeData) => ({
+                id: edgeData.slug,
+                source: edgeData.source_id,
+                target: edgeData.target_id,
+                animated: true,
+                style: {stroke: '#f6ab6c', strokeDasharray: '10,10'},
+            }));
+            setEdges(newEdges);
+        } catch (error) {
+            console.error('Error fetching edges:', error);
+        }
+    }, [setEdges]);
+
+    useEffect(() => {
+        const fetchData = async () => {
+            const docs = await getDocuments();
+            await getNodes(docs); // pass updated documents
+            await getEdges();
+        };
+
+        fetchData().then(r => {
+            console.log(r)
+        });
+    }, [getDocuments, getNodes, getEdges]);
+
+    const onConnect = useCallback((params: OnConnectParams): void => {
+        const {source, target} = params;
+
+        const isCircular = (sourceId: string, targetId: string, edges: Edge[]): boolean => {
+            const visited = new Set<string>();
+            const stack = [targetId];
+            while (stack.length > 0) {
+                const current = stack.pop();
+                if (current === sourceId) return true;
+                visited.add(current!);
+                edges.forEach((edge) => {
+                    if (edge.source === current && !visited.has(edge.target)) {
+                        stack.push(edge.target);
                     }
-                    visited.add(current!);
-                    edges.forEach((edge) => {
-                        if (edge.source === current && !visited.has(edge.target)) {
-                            stack.push(edge.target);
-                        }
-                    });
-                }
-                return false;
-            };
-
-            // Helper function to check if the target node already has a parent
-            const hasParent = (targetId: string, edges: Edge[]): boolean => {
-                return edges.some((edge) => edge.target === targetId);
-            };
-
-            if (!isCircular(source, target, edges) && !hasParent(target, edges)) {
-                const id = uuidv4();
-                api
-                    .post('/api/edge/create/', {slug: id, source_id: source, target_id: target})
-                    .then((res) => res.data)
-                    .then((data) => console.log(data))
-                    .catch((error) => alert(error));
-                setEdges((eds) =>
-                    addEdge(
-                        {
-                            ...params,
-                            id: id,
-                            animated: true,
-                            style: {stroke: '#f6ab6c', strokeDasharray: '5,5'},
-                        },
-                        eds
-                    )
-                );
-            } else if (hasParent(target, edges)) {
-                alert('A node cannot have more than one parent!');
-            } else {
-                alert('Circular connection is not allowed!');
+                });
             }
-        },
-        [edges, setEdges]
-    );
+            return false;
+        };
 
-    const setNewNode = (e: FormEvent<HTMLFormElement>): void => {
+        const hasParent = (targetId: string, edges: Edge[]): boolean => {
+            return edges.some((edge) => edge.target === targetId);
+        };
+
+        if (!isCircular(source, target, edges) && !hasParent(target, edges)) {
+            const newEdgeId = uuidv4();
+            api
+                .post('/api/edge/create/', {slug: newEdgeId, source_id: source, target_id: target})
+                .then((res) => res.data)
+                .then((data) => console.log(data))
+                .catch((error) => alert(error));
+            setEdges((prevEdges) =>
+                addEdge(
+                    {
+                        ...params,
+                        id: newEdgeId,
+                        animated: true,
+                        style: {stroke: '#f6ab6c', strokeDasharray: '5,5'},
+                    },
+                    prevEdges
+                )
+            );
+        } else if (hasParent(target, edges)) {
+            alert('A node cannot have more than one parent!');
+        } else {
+            alert('Circular connection is not allowed!');
+        }
+    }, [edges, setEdges]);
+
+    const setNewNode = useCallback((e: FormEvent<HTMLFormElement>): void => {
         e.preventDefault();
         const slug = uuidv4();
-        api
-            .post('/api/node/create/', {
-                slug: slug,
+
+        // Get the dynamic defaults for the current node type.
+        const defaults = getNodeTypeDefaults(nodeName as NodeType, {
+            documents,
+            onChange: handleNodeChange,
+            onDelete: handleDeleteNode,
+            onDocumentsChange: reloadNodeDocuments,
+        });
+
+        const newNode: Node = {
+            id: slug,
+            type: nodeName,
+            data: {
+                ...defaults,
                 type: nodeName,
-                canvas_id: 1,
+                label: nodeName || 'New Node',
                 position_x: 0,
                 position_y: 0,
-                label: nodeName,
-            })
-            .then((res) => res.data)
-            .then(() => {
-                console.log('documents set: ' + documents);
-                const newNode: Node = {
-                    id: slug,
-                    type: nodeName,
-                    data: {
-                        label: nodeName || 'New Node',
-                        onChange: handleNodeChange,
-                        onDelete: handleDeleteNode,
-                        imageModel: 'gpt-3o',
-                        temperature: 1,
-                        extractImages: false,
-                        documents: documents
-                    },
-                    position: {x: 0, y: 0},
-                };
-                setNodes((prevNodes) => [...prevNodes, newNode]);
-                setNodeName('');
-            })
-            .catch((error) => alert(error));
-    };
+                canvasId: 1,
+            },
+            position: {x: 0, y: 0},
+        };
 
-    // useEffect(() => {
-    //   const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-    //     nodes,
-    //     edges
-    //   );
-    //   setNodes([...layoutedNodes]);
-    //   setEdges([...layoutedEdges]);
-    // }, [nodes, edges, setNodes, setEdges]);
+        setNodes((prevNodes) => [...prevNodes, newNode]);
+        setNodeName('');
+    }, [nodeName, documents, handleNodeChange, handleDeleteNode, reloadNodeDocuments, setNodes]);
 
-    const handleSaveSettings = useCallback(() => {
-        // Iterate over pendingChanges and save them
-        Object.entries(pendingChanges).forEach(([nodeId, changes]) => {
-            api.post(`/api/node/${nodeId}/update/`, {...changes})
-                .then((res) => res.data)
-                .then((data) => console.log(`Saved node ${nodeId}: `, data))
-                .catch((error) => console.error(error));
+
+    const handleSave = useCallback((): void => {
+        const updatePromises = nodes.map((node) => {
+            const slug = node.id;
+            let updateData = node.data;
+            if (pendingChanges[node.id]) {
+                updateData = {...updateData, ...pendingChanges[node.id]};
+            }
+            updateData.position_x = node.position.x;
+            updateData.position_y = node.position.y;
+            return api.post(`/api/node/${slug}/update/`, updateData);
         });
-        // Optionally clear pending changes after saving
-        setPendingChanges({});
-    }, [pendingChanges]);
+        Promise.all(updatePromises)
+            .then((responses) => {
+                responses.forEach((res, index) => {
+                    console.log(`Saved node ${nodes[index].id}:`, res.data);
+                });
+                console.log('All nodes saved successfully!');
+                setPendingChanges({});
+            })
+            .catch((error) => {
+                console.error('Error saving nodes:', error);
+                alert('Error saving nodes.');
+            });
+    }, [nodes, pendingChanges]);
 
-    const handleNodeNameChange = (e: ChangeEvent<HTMLInputElement>): void => {
+    const handleNodeNameChange = useCallback((e: ChangeEvent<HTMLInputElement>): void => {
         setNodeName(e.target.value);
-    };
+    }, []);
 
     return (
         <div>
@@ -331,7 +370,7 @@ const LayoutFlow: React.FC = () => {
                 </form>
                 <button
                     className="px-4 py-3 rounded-lg bg-gray-200 hover:bg-gray-400"
-                    onClick={handleSaveSettings}
+                    onClick={handleSave}
                 >
                     Save
                 </button>
@@ -351,12 +390,10 @@ const LayoutFlow: React.FC = () => {
     );
 };
 
-const FlowProvider: React.FC = () => {
-    return (
-        <ReactFlowProvider>
-            <LayoutFlow/>
-        </ReactFlowProvider>
-    );
-};
+const FlowProvider: React.FC = () => (
+    <ReactFlowProvider>
+        <LayoutFlow/>
+    </ReactFlowProvider>
+);
 
 export default FlowProvider;

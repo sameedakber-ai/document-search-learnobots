@@ -1410,57 +1410,55 @@ class Neo4jNodes:
         with self.driver.session() as session:
             return session.run(cypher_query, parameters or {})
 
-    def create_node(self, slug, label, node_type, canvas_id, user_id, position_x, position_y):
-        # Convert the documents (which is a list of dicts) to a JSON string
-        documents_json = json.dumps([])
-        with self.driver.session() as session:
-            result = session.run(
-                """
-                CREATE (n:Node {
-                    label: $label, 
-                    slug: $slug, 
-                    type: $node_type, 
-                    canvas_id: $canvas_id, 
-                    user_id: $user_id, 
-                    position_x: $position_x, 
-                    position_y: $position_y, 
-                    image_model: $image_model, 
-                    temperature: $temperature, 
-                    extract_images: $extract_images, 
-                    documents: $documents
-                })
-                RETURN id(n)
-                """,
-                slug=slug,
-                label=label,
-                node_type=node_type,
-                canvas_id=canvas_id,
-                user_id=user_id,
-                position_x=position_x,
-                position_y=position_y,
-                image_model='gpt-3o',
-                temperature=1,
-                extract_images=False,
-                documents=documents_json
-            )
-            return result.single()[0]
+    def upsert_node(self, slug: str, data: dict, user_id: str):
+        """
+        Upsert a node based on the provided data.
+        The node is uniquely identified by 'slug'. All fields in data are applied.
+        If 'documents' or 'selectedDocuments' are present, they are converted to JSON strings.
+        A dynamic label is added based on the value of data["type"] (if provided).
 
-    def update_node(self, slug: str, data: dict):
+        :param slug: The unique identifier of the node.
+        :param data: A dictionary containing the node's properties.
+        :param user_id: User identifier.
+        :return: The internal Neo4j node id.
         """
-        Update a node's properties based on the given data dictionary.
-        If data contains a 'documents' key, convert it to a JSON string.
-        """
+        print("data: ", data)
+
+        # Convert 'documents' if present.
         if 'documents' in data:
+            # Ensure documents is a list, then dump to JSON.
+            if not isinstance(data['documents'], list):
+                data['documents'] = [data['documents']]
             data['documents'] = json.dumps(data['documents'])
+            print("\n\nDocuments:\n---\n", data['documents'], "\n---\n\n")
+
+        # Convert 'selectedDocuments' if present.
+        if 'selectedDocuments' in data:
+            # Ensure selectedDocuments is a list, then dump to JSON.
+            if not isinstance(data['selectedDocuments'], list):
+                data['selectedDocuments'] = [data['selectedDocuments']]
+            data['selectedDocuments'] = json.dumps(data['selectedDocuments'])
+            print("\n\nSelected Documents:\n---\n", data['selectedDocuments'], "\n---\n\n")
+
+        # Set the user id.
+        data['user_id'] = user_id
+
+        # Use the type from data if available; otherwise default to "Node".
+        node_type = data.get("type", "Node")
+
         with self.driver.session() as session:
             result = session.run(
                 """
-                MATCH (n:Node {slug: $slug})
-                SET n += $data
-                RETURN id(n) AS node_id
+                MERGE (n:Node {slug: $slug})
+                ON CREATE SET n += $data
+                ON MATCH SET n += $data
+                WITH n
+                CALL apoc.create.addLabels(n, [$node_type]) YIELD node
+                RETURN id(node) AS node_id
                 """,
                 slug=slug,
-                data=data
+                data=data,
+                node_type=node_type
             )
             return result.single()["node_id"]
 
@@ -1486,26 +1484,49 @@ class Neo4jNodes:
         with self.driver.session() as session:
             result = session.run(
                 """
-                MATCH (n:Node) 
-                WHERE n.user_id = $user_id 
-                RETURN id(n) AS id, 
-                       n.type AS type, 
-                       n.label AS label, 
-                       n.canvas_id AS canvas_id, 
-                       n.position_x AS position_x, 
-                       n.position_y AS position_y, 
-                       n.slug AS slug, 
-                       n.image_model AS image_model, 
-                       n.temperature AS temperature, 
-                       n.extract_images AS extract_images, 
-                       n.documents AS documents
+                MATCH (n:Node)
+                WHERE n.user_id = $user_id
+                RETURN id(n) AS id, n.slug AS slug,
+                CASE 
+                  WHEN "documentLoader" IN labels(n) THEN {
+                      type: n.type,
+                      label: n.label,
+                      canvasId: n.canvasId,
+                      position_x: n.position_x,
+                      position_y: n.position_y,
+                      imageModel: n.imageModel,
+                      temperature: n.temperature,
+                      extractImages: n.extractImages,
+                      documents: n.documents,
+                      selectedDocuments: n.selectedDocuments
+                  }
+                  WHEN "askAI" IN labels(n) THEN {
+                      type: n.type,
+                      label: n.label,
+                      canvasId: n.canvasId,
+                      position_x: n.position_x,
+                      position_y: n.position_y,
+                      aiModel: n.aiModel,
+                      prompt: n.prompt,
+                      context: n.context
+                  }
+                  ELSE {
+                      type: n.type,
+                      label: n.label,
+                      canvasId: n.canvasId,
+                      position_x: n.position_x,
+                      position_y: n.position_y
+                  }
+                END AS data
                 """,
                 user_id=user_id
             )
             nodes = []
             for record in result:
-                data = record.data()
-                # If the documents property exists, try decoding it from JSON
+                # The "data" map now contains only the relevant fields
+                data = record["data"]
+
+                # If the documents property exists and is a JSON string, decode it.
                 if data.get("documents"):
                     try:
                         data["documents"] = json.loads(data["documents"])
@@ -1514,7 +1535,23 @@ class Neo4jNodes:
                         data["documents"] = []
                 else:
                     data["documents"] = []
-                nodes.append(data)
+
+                if data.get("selectedDocuments"):
+                    try:
+                        data["selectedDocuments"] = json.loads(data["selectedDocuments"])
+                    except Exception as e:
+                        print(f"Error decoding selectedDocuments: {e}")
+                        data["selectedDocuments"] = []
+                else:
+                    data["selectedDocuments"] = []
+
+                # Optionally, you can merge the id and slug into the data or keep them separate.
+                node = {
+                    "id": record["id"],
+                    "slug": record["slug"],
+                    **data
+                }
+                nodes.append(node)
             return nodes
 
     def get_all_edges(self, user_id):

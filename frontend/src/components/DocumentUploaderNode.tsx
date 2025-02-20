@@ -2,85 +2,82 @@ import {
     ChangeEvent,
     useCallback,
     useState,
-    FC, useEffect,
+    FC
 } from 'react';
-import {Handle, Position, NodeProps} from '@xyflow/react';
+import {Handle, Position, NodeProps, XYPosition} from '@xyflow/react';
 import {createPortal} from 'react-dom';
 import DocumentUploaderModal from './DocumentUploaderModal';
-import api from "../api.ts";
-import {DocumentType} from "./CustomLessonFlow.tsx";
+import {DocumentType} from "./CustomLessonFlow";
 
-export interface DocumentUploaderData {
+export interface NodeData {
+    [key: string]: unknown;
     label: string;
     documents: DocumentType[];
+    selectedDocuments: DocumentType[];
+    imageModel: string;
+    temperature: number;
+    extractImages: boolean;
     onDelete?: (nodeId: string) => void;
-    onChange?: (nodeId: string, changes: Partial<DocumentUploaderData>) => void;
+    onChange?: (nodeId: string, changes: Partial<NodeData>) => void;
+    onDocumentsChange?: () => void;
 }
 
-interface DocumentUploaderNodeProps extends NodeProps<DocumentUploaderData> {
+export interface DocumentUploaderData extends Record<string, unknown> {
+    id: string,
+    position: XYPosition,
+    data: NodeData
 }
+
+export type DocumentUploaderNodeProps = NodeProps<DocumentUploaderData>;
 
 const DocumentUploaderNode: FC<DocumentUploaderNodeProps> = ({id, data}) => {
     const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
 
     const [imageModel, setImageModel] = useState<string>(data.imageModel);
-    const [temperature, setTemperature] = useState<string>(data.temperature);
-    const [extractImages, setExtractImages] = useState<string>(data.extractImages);
+    const [temperature, setTemperature] = useState<number>(data.temperature);
+    const [extractImages, setExtractImages] = useState<boolean>(data.extractImages);
 
     const handleOpenModal = useCallback((): void => setIsModalOpen(true), []);
     const handleCloseModal = useCallback((): void => setIsModalOpen(false), []);
 
-    // const onChange = useCallback((evt: ChangeEvent<HTMLInputElement>): void => {
-    //     const updatedName = evt.target.value;
-    //     setNodeName(updatedName);
-    //
-    //     console.log(updatedName);
-    //     api
-    //         .post(`/api/node/create/`, {slug: id, label: updatedName})
-    //         .then((res) => res.data)
-    //         .then((data) => console.log(data))
-    //         .catch((error) => alert(error));
-    // }, [id]);
-
+    // Delete node callback
     const handleDeleteClick = useCallback((): void => {
         if (data.onDelete) {
             data.onDelete(id);
         }
     }, [data, id]);
 
-    useEffect(() => {
-        console.log(data.documents);
-    }, []);
-
-    const onImageModelChange = useCallback((evt: ChangeEvent<HTMLInputElement>): void => {
-        const updatedImageModel = evt.target.value;
-        setImageModel(updatedImageModel);
-        // Call parent's callback to store the pending change
+    // Change handlers – these update local state and call the parent's onChange callback.
+    const onImageModelChange = useCallback((evt: ChangeEvent<HTMLSelectElement>): void => {
+        const updated = evt.target.value;
+        setImageModel(updated);
         if (data.onChange) {
-            data.onChange(id, {image_model: updatedImageModel});
+            data.onChange(id, {imageModel: updated});
         }
     }, [data, id]);
 
     const onTemperatureChange = useCallback((evt: ChangeEvent<HTMLInputElement>): void => {
-        const updatedTemperature = evt.target.value;
-        setTemperature(updatedTemperature);
-        // Call parent's callback to store the pending change
+        const updated = parseFloat(evt.target.value) || 0;
+        setTemperature(updated);
         if (data.onChange) {
-            data.onChange(id, {temperature: updatedTemperature});
+            data.onChange(id, {temperature: updated});
         }
     }, [data, id]);
 
-    const onExtractImagesChange = useCallback(
-        (evt: ChangeEvent<HTMLInputElement>): void => {
-            const updatedExtractImages = evt.target.checked; // Use 'checked' instead of 'value'
-            setExtractImages(updatedExtractImages);
-            // Call parent's callback to store the pending change
-            if (data.onChange) {
-                data.onChange(id, {extract_images: updatedExtractImages});
-            }
-        },
-        [data, id]
-    );
+    const onExtractImagesChange = useCallback((evt: ChangeEvent<HTMLInputElement>): void => {
+        const updated = evt.target.checked;
+        setExtractImages(updated);
+        if (data.onChange) {
+            data.onChange(id, {extractImages: updated});
+        }
+    }, [data, id]);
+
+
+    const handleUpdateSelectedDocuments = useCallback((docs: DocumentType[]): void => {
+        if (data.onChange) {
+            data.onChange(id, {selectedDocuments: docs});
+        }
+    }, [data, id]);
 
     return (
         <>
@@ -260,6 +257,9 @@ const DocumentUploaderNode: FC<DocumentUploaderNodeProps> = ({id, data}) => {
                     isOpen={isModalOpen}
                     onClose={handleCloseModal}
                     documents={data.documents}
+                    onDocumentsChange={data.onDocumentsChange}
+                    selectedDocuments={data.selectedDocuments}
+                    onChange={handleUpdateSelectedDocuments}
                 />,
                 document.body
             )}

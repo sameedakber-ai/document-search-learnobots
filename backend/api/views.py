@@ -94,10 +94,8 @@ class NodeUpdateView(APIView):
         neo4j = Neo4jNodes()
         data = request.data
 
-        node_id = neo4j.update_node(slug=slug, data=data)
+        node_id = neo4j.upsert_node(slug=slug, data=data, user_id=request.user.id)
         return Response({"message": "Node updated successfully"}, status=status.HTTP_200_OK)
-
-
 
 
 class EdgeCreateView(APIView):
@@ -128,7 +126,7 @@ class NodeListView(APIView):
         nodes = neo4j.get_nodes_by_user(request.user.id)
         neo4j.close()
 
-        print(nodes)
+        print("\n\nnodes: ", nodes, "\n\n")
 
         return Response(nodes, status=status.HTTP_200_OK)
 
