@@ -4,15 +4,17 @@ from django.shortcuts import render
 from django.contrib.auth.models import User
 
 from .helpers import Neo4jNodes
-from .models import Document
+from .models import Document, Workflow, Agent, Memory
 
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import status
 
-from .serializers import UserSerializer, DocumentSerializer, ChatSerializer
+from .serializers import UserSerializer, DocumentSerializer, FileSerializer, WorkflowSerializer, \
+    AgentSerializer, MemorySerializer
 from .services import DocumentProcessService, ChatService
+from .tasks import process_workflow
 
 
 class UserCreateView(APIView):
@@ -28,32 +30,113 @@ class UserCreateView(APIView):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-class DocumentUploadView(APIView):
+class FileUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, slug, *args, **kwargs):
+        agent = Agent.objects.get(slug=slug)
+        serializer = FileSerializer(data=request.data, context={'request': request, 'agent': agent})
+        serializer.is_valid(raise_exception=True)
+
+        file = serializer.save()
+
+        serializer = FileSerializer(file)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+class FileListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, slug, *args, **kwargs):
+        agent = Agent.objects.get(slug=slug)
+        files = agent.files.all()
+
+        serializer = FileSerializer(files, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+class WorkflowCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        serializer = DocumentSerializer(data=request.data, context={'request': request})
+        serializer = WorkflowSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
 
-        document = serializer.save()
-        # loaded_document = DocumentProcessService.process_document(document=document)
+        workflow = serializer.save()
 
-        serializer = DocumentSerializer(document)
+        serializer = WorkflowSerializer(workflow)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+class WorkflowListView(APIView):
+    permission_classes = [IsAuthenticated]
 
-class ChatView(APIView):
+    def get(self, request, *args, **kwargs):
+        workflows = Workflow.objects.all()
+
+        serializer = WorkflowSerializer(workflows, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+class AgentCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        serializer = ChatSerializer(data=request.data, context={'request': request})
+        serializer = AgentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        chat = serializer.save()
-        chat = ChatService.generate_response(chat=chat)
+        agent = serializer.save()
 
-        serializer = ChatSerializer(chat)
+        serializer = AgentSerializer(agent)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+class WorkflowAgentsListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, id, *args, **kwargs):
+        workflow = Workflow.objects.get(pk=id)
+        agents = Agent.objects.filter(workflow=workflow)
+
+        serializer = AgentSerializer(agents, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+class WorkflowChatMemoriesListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, id, *args, **kwargs):
+        workflow = Workflow.objects.get(pk=id)
+        memories = Memory.objects.filter(workflow=workflow)
+        print(memories)
+
+        serializer = MemorySerializer(memories, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+class MemoryCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        print(request.data)
+        serializer = MemorySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        memory = serializer.save()
+        memory.output = ChatService.execute_workflow(memory)
+        memory.save()
+
+        serializer = MemorySerializer(memory)
+        print(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class WorkflowStartView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        node_id = request.data.get('node_id')
+        trigger_id = request.data.get('trigger_id')
+        chat_input = request.data.get('input')
+
+        print(node_id, trigger_id, chat_input)
+
+        outputs = process_workflow(node_id, trigger_id, chat_input)
+
+        return Response({"status": "Workflow started", "outputs": outputs})
 
 
 class NodeCreateView(APIView):
@@ -105,8 +188,6 @@ class EdgeCreateView(APIView):
         neo4j = Neo4jNodes()
         data = request.data
 
-        print(data.get("source_id"))
-
         edge_id = neo4j.create_edge(
             user_id=request.user.id,
             slug=data.get("slug"),
@@ -126,8 +207,6 @@ class NodeListView(APIView):
         nodes = neo4j.get_nodes_by_user(request.user.id)
         neo4j.close()
 
-        print("\n\nnodes: ", nodes, "\n\n")
-
         return Response(nodes, status=status.HTTP_200_OK)
 
 
@@ -138,8 +217,6 @@ class EdgeListView(APIView):
         neo4j = Neo4jNodes()
         edges = neo4j.get_all_edges(request.user.id)
         neo4j.close()
-
-        print("edges: ", edges)
 
         return Response(edges, status=status.HTTP_200_OK)
 
@@ -152,7 +229,15 @@ class DocumentListView(APIView):
 
         serializer = DocumentSerializer(documents, many=True)
 
-        print(serializer.data)
-
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class CanvasRunView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        neo4j = Neo4jNodes()
+        neo4j.process_pipeline(canvas_id=1)
+
+        return Response({"message": "processing complete"}, status=status.HTTP_200_OK)
 

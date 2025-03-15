@@ -587,7 +587,9 @@ const Workflow: React.FC = () => {
             },
         };
         // const res = await api.post(`/api/agent/create/`, newAgentData);
-        const res = await api.post(`/api/start-workflow/`, {node_id: id});
+        const triggerId = activeNode?.id;
+        console.log('trigger id: ', triggerId);
+        const res = await api.post(`/api/start-workflow/`, {node_id: id, trigger_id: triggerId, input: chatInput});
         console.log(res.data);
         // const res = await api.post('/api/memory/create/', newMemory);
         // const newMemoryUpdated = {
