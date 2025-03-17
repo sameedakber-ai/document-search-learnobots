@@ -1,8 +1,14 @@
-import React, {ChangeEvent, FormEvent, useCallback, useEffect, useState} from "react";
+import {v4 as uuidv4} from "uuid";
 import {useParams} from "react-router-dom";
 import api from "../api";
 
-import {useFuzzySearchList, Highlight} from '@nozbe/microfuzz/react'
+import React, {
+    ChangeEvent,
+    FormEvent,
+    useCallback,
+    useEffect, useRef,
+    useState
+} from "react";
 
 import {
     ReactFlowProvider,
@@ -10,20 +16,24 @@ import {
     useNodesState,
     useEdgesState,
     addEdge,
-    Node,
     Edge,
-    XYPosition, Controls, MiniMap, Background,
+    Controls,
+    MiniMap,
+    Background,
 } from '@xyflow/react';
-import DocumentUploaderNode from "./DocumentUploaderNode.tsx";
-import DocumentLoaderAgent from "./DocumentLoaderAgent.tsx";
-import AskAINode from "./AskAINode.tsx";
-import {v4 as uuidv4} from "uuid";
 import '@xyflow/react/dist/style.css';
+
+import DocumentLoaderAgent from "./DocumentLoaderAgent.tsx";
 import ChatAgent from "./ChatAgent.tsx";
 import DefaultPlusEdge from "./DefaultPlusEdge.tsx";
 import ChatTriggerNode from "./ChatTriggerNode.tsx";
 import MemoryNode from "./MemoryNode.tsx";
 import ChatModelNode from "./ChatModelNode.tsx";
+
+import { AgentNode, AgentData, isAgentNodeOfType } from '../nodeTypes';
+import {MemoryItem} from "../nodeTypes.ts";
+
+import {useFuzzySearchList, Highlight} from '@nozbe/microfuzz/react'
 
 const nodeTypes = {
     documentLoader: DocumentLoaderAgent,
@@ -38,122 +48,8 @@ const edgeTypes = {defaultPlus: DefaultPlusEdge};
 export interface OnConnectParams {
     source: string;
     target: string;
-}
-
-export interface FileType {
-    id: string;
-    extension: string;
-    name: string;
-    date: string;
-}
-
-export interface AgentBase {
-    [key: string]: unknown;
-
-    slug: string;
-    type: 'documentLoader' | 'chat' | 'chatTrigger' | 'memory' | 'chatModel';
-    workflow?: string;
-    next_agents?: string[];
-    memory_node?: string;
-    chat_model_node?: string;
-    tool_nodes?: string[];
-}
-
-export interface ChatTriggerNodeBase extends AgentBase {
-    onOpenChat?: (nodeId: string) => void;
-}
-
-export interface DocumentLoaderProperties {
-    files: FileType[];
-    embedding_model: string;
-    position_x: number;
-    position_y: number;
-}
-
-export interface AskAIProperties {
-    generation_model: string;
-    temperature: number;
-    context: string;
-    prompt: string;
-    position_x: number;
-    position_y: number;
-}
-
-export interface ChatTriggerProperties {
-    position_x: number;
-    position_y: number;
-    memories?: MemoryItem[];
-}
-
-export interface MemoryContent {
-    type: string;
-    text: string;
-}
-
-export interface MemoryItem {
-    role: string;
-    content: MemoryContent[];
-}
-
-export interface MemoryNodeProperties {
-    position_x: number;
-    position_y: number;
-    memories?: MemoryItem[];
-}
-
-export interface ChatModelNodeProperties {
-    position_x: number;
-    position_y: number;
-    service: string;
-    model: string;
-}
-
-export interface DocumentLoaderAgent extends AgentBase {
-    type: 'documentLoader';
-    properties: DocumentLoaderProperties;
-}
-
-export interface AskAIAgent extends AgentBase {
-    type: 'chat';
-    properties: AskAIProperties;
-}
-
-export interface ChatTrigger extends ChatTriggerNodeBase {
-    type: 'chatTrigger',
-    properties: ChatTriggerProperties
-}
-
-export interface Memory extends AgentBase {
-    type: 'memory',
-    properties: MemoryNodeProperties
-}
-
-export interface ChatModel extends AgentBase {
-    type: 'chatModel',
-    properties: ChatModelNodeProperties
-}
-
-
-export type AgentData = DocumentLoaderAgent | AskAIAgent | ChatTrigger | Memory | ChatModel;
-
-export interface AgentNode extends Node {
-    id: string;
-    type: string;
-    data: AgentData;
-    position: XYPosition;
-}
-
-export interface ChatMemory {
-    input: string;
-    output?: string;
-    workflow?: string;
-}
-
-export interface ChatMemoryResponse {
-    id: string;
-    input: string;
-    output?: string;
-    workflow: string;
+    sourceHandle: string | null;
+    targetHandle: string | null;
 }
 
 const initialNodes: AgentNode[] = [];
@@ -164,60 +60,28 @@ const nodeLabels = [
         key: 1,
         name: 'documentLoader',
         description: 'Load documents for RAG',
-        agent: DocumentUploaderNode
     },
     {
         key: 2,
         name: 'chat',
         description: 'Chat with LLM',
-        agent: AskAINode
     },
     {
         key: 3,
         name: 'chatTrigger',
         description: 'When chat message received trigger node',
-        agent: ChatTriggerNode
     },
     {
         key: 4,
         name: 'memory',
         description: 'Memory for Chat Agents',
-        agent: MemoryNode
     },
     {
         key: 5,
         name: 'chatModel',
         description: 'Chat Model for conversational Chat AI Agents',
-        agent: ChatModelNode
     }
 ];
-
-const chatModelProviders = [
-    {
-        key: 1,
-        name: 'openai',
-        label: 'OpenAI Chat Model',
-        description: 'For Advanced Usage with AI Chains'
-    },
-    {
-        key: 2,
-        name: 'anthropic',
-        label: 'Anthropic Chat Model',
-        description: 'Language Model Anthropic '
-    },
-    {
-        key: 3,
-        name: 'azure',
-        label: 'Azure OpenAI Chat Model',
-        description: 'For Advanced Usage with AI Chains'
-    },
-    {
-        key: 4,
-        name: 'google',
-        label: 'Google Gemini Chat Model',
-        description: 'Chat Model Google Gemini'
-    },
-]
 
 const Workflow: React.FC = () => {
     const {id} = useParams<{ id: string }>();
@@ -225,48 +89,44 @@ const Workflow: React.FC = () => {
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initialEdges)
     const [showSidebar, setShowSidebar] = useState<boolean>(false);
     const [queryText, setQueryText] = useState<string>('');
-    const [showChatSidebar, setShowChatSidebar] = useState<boolean>(false);
     const [showChatWindow, setShowChatWindow] = useState<boolean>(false);
     const [activeNode, setActiveNode] = useState<AgentNode | null>(null);
     const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
     const [memories, setMemories] = useState<MemoryItem[]>([]);
     const [chatInput, setChatInput] = useState<string>('');
-    const [messages, setMessages] = useState([]);
+    const [messages, setMessages] = useState<string[]>([]);
 
     const filteredList = useFuzzySearchList({
         list: nodeLabels,
         queryText,
         getText: (item) => [item.description],
-        // arbitrary mapping function, takes `FuzzyResult<T>` as input
         mapResultItem: ({item, matches: [highlightRanges]}) => ({item, highlightRanges})
     });
 
-    const handleOpenChat = (nodeId: string) => {
-        // If agents data isn't loaded yet, store the pending node id.
-        if (agents.length === 0) {
+    const agentsRef = useRef<AgentNode[]>(agents);
+    useEffect(() => {
+        agentsRef.current = agents;
+    }, [agents]);
+
+
+    const handleDeleteNode = useCallback(async (id: string) => {
+        const res = await api.delete(`/api/agent/${id}/delete/`);
+        console.log(res.data);
+        setAgents(prevAgents => prevAgents.filter(agent => agent.id !== id));
+    }, [setAgents]);
+
+    const handleOpenChat = useCallback((nodeId: string) => {
+        const currentAgents = agentsRef.current;
+        if (currentAgents.length === 0) {
             setPendingNodeId(nodeId);
             setShowChatWindow(true);
             return;
         }
-
-        const node = agents.find((agent) => agent.id === nodeId) || null;
+        const node = currentAgents.find((agent) => agent.id === nodeId) || null;
         setActiveNode(node);
         setShowChatWindow(true);
-    };
+    }, []);
 
-    // Once agents have loaded, check if there is a pending node id and process it.
-    useEffect(() => {
-        if (pendingNodeId && agents.length > 0) {
-            const node = agents.find((agent) => agent.id === pendingNodeId) || null;
-            setActiveNode(node);
-            setPendingNodeId(null); // Clear the pending id
-            setMemories(node?.data.properties.memories);
-        }
-    }, [activeNode?.data.properties.memories, agents, pendingNodeId]);
-
-    const handleOpenChatSidebar = () => {
-        setShowChatSidebar(true);
-    }
 
     useEffect(() => {
         const wsUrl = `ws://localhost:8000/ws/workflow/${id}/`;
@@ -280,6 +140,15 @@ const Workflow: React.FC = () => {
             const data = JSON.parse(event.data);
             setMessages(prevMessages => [...prevMessages, data.message]);
             console.log(data.message);
+            console.log(messages);
+
+            setAgents(prevAgents =>
+                prevAgents.map(agent =>
+                    agent.id === data.node_id
+                        ? {...agent, data: {...agent.data, status: data.status}}
+                        : agent
+                )
+            );
         };
 
         socket.onerror = (error) => {
@@ -294,7 +163,7 @@ const Workflow: React.FC = () => {
         return () => {
             socket.close();
         };
-    }, [id]);
+    }, [id, messages, setAgents]);
 
     const getAgents = useCallback(async (): Promise<void> => {
         try {
@@ -305,42 +174,35 @@ const Workflow: React.FC = () => {
                 type: data.type,
                 data: {
                     ...data,
-                    ...(data.type === "chatTrigger" ? {onOpenChat: handleOpenChat} : {})
+                    ...(data.type === "chatTrigger" ? {onOpenChat: handleOpenChat} : {}),
+                    status: 'pending',
+                    onDelete: handleDeleteNode,
                 },
                 position: {
                     x: data.properties.position_x,
-                    y: data.properties.position_y
-                }
+                    y: data.properties.position_y,
+                },
             }));
 
             setAgents(agents);
 
-            agents.map((agent) => {
+            // Create edges based on next_agents
+            agents.forEach((agent) => {
                 const targets = agent.data.next_agents;
-                console.log(targets);
                 if (targets) {
-                    targets.map((target) => {
-                        const sourceId = agent.id;
-                        const targetId = target;
-                        const newEdgeId = uuidv4();
-                        setEdges((prevEdges) =>
-                            addEdge(
-                                {
-                                    source: sourceId,
-                                    target: targetId,
-                                    id: newEdgeId,
-                                    animated: true,
-                                    style: {stroke: '#f6ab6c', strokeDasharray: '5,5'},
-                                },
-                                prevEdges
-                            )
-                        );
+                    targets.forEach((target) => {
+                        const newEdge: Edge = {
+                            source: agent.id,
+                            target: target,
+                            id: uuidv4(),
+                            animated: true,
+                            style: {stroke: '#f6ab6c', strokeDasharray: '5,5'},
+                        };
+                        setEdges((prevEdges) => addEdge(newEdge, prevEdges));
                     });
                 }
-            });
-            agents.forEach((agent) => {
                 if (agent.type === 'chat') {
-                    const memory_node = agent.data.memory_node;
+                    const {memory_node, chat_model_node} = agent.data;
                     if (memory_node) {
                         const chatEdge = {
                             id: uuidv4(),
@@ -352,8 +214,6 @@ const Workflow: React.FC = () => {
                         };
                         setEdges((prevEdges) => [...prevEdges, chatEdge]);
                     }
-
-                    const chat_model_node = agent.data.chat_model_node;
                     if (chat_model_node) {
                         const chatEdge = {
                             id: uuidv4(),
@@ -370,23 +230,13 @@ const Workflow: React.FC = () => {
         } catch (error) {
             alert(error);
         }
-    }, [id, setAgents, setEdges]);
+    }, [handleDeleteNode, handleOpenChat, id, setAgents, setEdges]);
 
-    const getChatMemories = useCallback(async () => {
-        const res = await api.get(`/api/workflow/${id}/memories/`);
-        const memories: ChatMemory[] = res.data.map((memory: ChatMemoryResponse) => ({
-            input: memory.input,
-            output: memory.output,
-            workflow: memory.workflow
-        }));
-        setMemories(memories);
-        console.log(memories);
-    }, [id]);
 
     useEffect(() => {
         getAgents().then(r => console.log(r));
         // getChatMemories().then(r => console.log(r));
-    }, [getAgents, getChatMemories]);
+    }, [getAgents]);
 
     const onConnect = useCallback(async (params: OnConnectParams): Promise<void> => {
         const {source, sourceHandle, target, targetHandle} = params;
@@ -407,18 +257,13 @@ const Workflow: React.FC = () => {
             return false;
         };
 
-        const isValid = (sourceHandleId: string, targetHandleId: string): boolean => {
+        const isValid = (sourceHandleId: string | null, targetHandleId: string | null): boolean => {
+            if (!sourceHandleId || !targetHandleId) {
+                return false;
+            }
             const getPrefix = (handleId: string): string => handleId.split('-')[0];
             return getPrefix(sourceHandleId) === getPrefix(targetHandleId);
         };
-
-        const hasParent = (targetId: string, edges: Edge[]): boolean => {
-            return edges.some((edge) => edge.target === targetId);
-        };
-
-        const handleShowChatWindow = () => {
-            setShowChatWindow(true);
-        }
 
         if (!isCircular(source, target, edges) && isValid(sourceHandle, targetHandle)) {
             const newEdgeId = uuidv4();
@@ -487,6 +332,8 @@ const Workflow: React.FC = () => {
                     position_x: 0,
                     position_y: 0,
                 },
+                onDelete: handleDeleteNode,
+                status: 'pending'
             };
         } else if (agentType === 'chat') {
             newAgentData = {
@@ -502,6 +349,8 @@ const Workflow: React.FC = () => {
                     position_x: 0,
                     position_y: 0,
                 },
+                status: 'pending',
+                onDelete: handleDeleteNode,
             };
         } else if (agentType === 'chatTrigger') {
             newAgentData = {
@@ -515,6 +364,8 @@ const Workflow: React.FC = () => {
                     position_y: 0,
                     memories: []
                 },
+                status: 'pending',
+                onDelete: handleDeleteNode,
             }
         } else if (agentType === 'memory') {
             newAgentData = {
@@ -527,6 +378,8 @@ const Workflow: React.FC = () => {
                     position_y: 0,
                     memories: []
                 },
+                status: 'pending',
+                onDelete: handleDeleteNode,
             }
         } else if (agentType === 'chatModel') {
             newAgentData = {
@@ -540,6 +393,8 @@ const Workflow: React.FC = () => {
                     service: 'openai',
                     model: 'gpt-4o'
                 },
+                status: 'pending',
+                onDelete: handleDeleteNode,
             }
         } else {
             return;
@@ -572,32 +427,30 @@ const Workflow: React.FC = () => {
                 text: chatInput
             }]
         };
-        activeNode?.data.properties.memories.push(newMemory);
+        const node = agents.find((agent) => isAgentNodeOfType(agent, 'chatTrigger'));
+        if (!node) {
+            return;
+        }
+
+        // TypeScript now knows node.data.properties is ChatTriggerProperties.
+        node.data.properties.memories?.push(newMemory);
         setMemories((prevMemories) => [...prevMemories, newMemory]);
-        const newAgentData = {
-            slug: activeNode?.id,
-            type: 'chatTrigger',
-            workflow: id,
-            next_agents: [],
-            onOpenChat: handleOpenChat,
-            properties: {
-                position_x: 0,
-                position_y: 0,
-                memories: memories
-            },
-        };
-        // const res = await api.post(`/api/agent/create/`, newAgentData);
+        // const newAgentData = {
+        //     slug: activeNode?.id,
+        //     type: 'chatTrigger',
+        //     workflow: id,
+        //     next_agents: [],
+        //     onOpenChat: handleOpenChat,
+        //     properties: {
+        //         position_x: 0,
+        //         position_y: 0,
+        //         memories: memories
+        //     },
+        // };
         const triggerId = activeNode?.id;
         console.log('trigger id: ', triggerId);
         const res = await api.post(`/api/start-workflow/`, {node_id: id, trigger_id: triggerId, input: chatInput});
         console.log(res.data);
-        // const res = await api.post('/api/memory/create/', newMemory);
-        // const newMemoryUpdated = {
-        //     input: res.data.input,
-        //     output: res.data.output,
-        //     workflow: res.data.workflow
-        // }
-        // setMemories((prevMemories) => [...prevMemories, newMemoryUpdated]);
     }
 
     return (
@@ -625,15 +478,15 @@ const Workflow: React.FC = () => {
                                     </div>
                                     <div>
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                             stroke-width="1.5" stroke="currentColor" className="size-4">
-                                            <path stroke-linecap="round" stroke-linejoin="round"
+                                             strokeWidth="1.5" stroke="currentColor" className="size-4">
+                                            <path strokeLinecap="round" strokeLinejoin="round"
                                                   d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3"/>
                                         </svg>
                                     </div>
                                 </div>
                             </div>
                             {
-                                activeNode.data.properties.memories?.map((memory: MemoryItem, index) => {
+                                memories?.map((memory: MemoryItem, index) => {
                                     const lastContent = memory.content[memory.content.length - 1]?.text;
                                     return (
                                         <div key={index} className="w-full px-4">
@@ -671,8 +524,8 @@ const Workflow: React.FC = () => {
                         !showSidebar ? (
                             <button className="" onClick={handleOpenSidebar}>
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                     stroke-width="1.5" stroke="currentColor" className="size-8">
-                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                     strokeWidth="1.5" stroke="currentColor" className="size-8">
+                                    <path strokeLinecap="round" strokeLinejoin="round"
                                           d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
                                 </svg>
 
@@ -710,33 +563,7 @@ const Workflow: React.FC = () => {
                         )
                     }
                 </div>
-                <div className="absolute right-0 top-0 z-50 bg-zinc-700 h-full">
-                    {
-                        showChatSidebar && (
-                            <div>
-                                <div className="bg-zinc-500 p-4">
-                                    <h1 className="text-2xl text-white">
-                                        Language Models
-                                    </h1>
-                                </div>
-                                <div className="p-4 text-white">
-                                    <div>
-                                        <input type="text" placeholder="Search nodes ..."
-                                               className="rounded-md border-1 border-blue-200 p-2 w-full"/>
-                                    </div>
-                                    <div className="mt-4">
-                                        {chatModelProviders.map((provider) => (
-                                            <div className="my-4" key={provider.key}>
-                                                <div>{provider.label}</div>
-                                                <div className="text-xs">{provider.description}</div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        )
-                    }
-                </div>
+
                 <div style={{width: '100vw', height: '100vh'}}>
                     <ReactFlow
                         nodes={agents}
@@ -750,12 +577,13 @@ const Workflow: React.FC = () => {
                     >
                         <Controls/>
                         <MiniMap/>
-                        <Background variant="dots" gap={12} size={1}/>
+                        <Background gap={12} size={1}/>
                     </ReactFlow>
                 </div>
             </div>
         </div>
-    );
+    )
+        ;
 
 };
 
