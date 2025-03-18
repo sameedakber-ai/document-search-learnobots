@@ -86,6 +86,15 @@ class AgentCreateView(APIView):
         serializer = AgentSerializer(agent)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+class AgentDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, slug, *args, **kwargs):
+        agent = Agent.objects.get(slug=slug)
+        agent.delete()
+
+        return Response({'message': 'node deleted'}, status=status.HTTP_200_OK)
+
 class WorkflowAgentsListView(APIView):
     permission_classes = [IsAuthenticated]
 
