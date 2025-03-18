@@ -25,12 +25,11 @@ import '@xyflow/react/dist/style.css';
 
 import DocumentLoaderAgent from "./DocumentLoaderAgent.tsx";
 import ChatAgent from "./ChatAgent.tsx";
-import DefaultPlusEdge from "./DefaultPlusEdge.tsx";
 import ChatTriggerNode from "./ChatTriggerNode.tsx";
 import MemoryNode from "./MemoryNode.tsx";
 import ChatModelNode from "./ChatModelNode.tsx";
 
-import { AgentNode, AgentData, isAgentNodeOfType, getFlowType } from '../nodeTypes';
+import {AgentNode, AgentData, isAgentNodeOfType, getFlowType} from '../nodeTypes';
 import {MemoryItem} from "../nodeTypes.ts";
 
 import {useFuzzySearchList, Highlight} from '@nozbe/microfuzz/react'
@@ -43,7 +42,7 @@ const nodeTypes = {
     chatModel: ChatModelNode
 };
 
-const edgeTypes = {defaultPlus: DefaultPlusEdge};
+const edgeTypes = {};
 
 export interface OnConnectParams {
     source: string;
@@ -123,6 +122,7 @@ const Workflow: React.FC = () => {
             return;
         }
         const node = currentAgents.find((agent) => agent.id === nodeId) || null;
+        console.log(node?.id);
         setActiveNode(node);
         setShowChatWindow(true);
     }, []);
@@ -140,7 +140,6 @@ const Workflow: React.FC = () => {
             const data = JSON.parse(event.data);
             setMessages(prevMessages => [...prevMessages, data.message]);
             console.log(data.message);
-            console.log(messages);
 
             setAgents(prevAgents =>
                 prevAgents.map(agent =>
@@ -163,7 +162,8 @@ const Workflow: React.FC = () => {
         return () => {
             socket.close();
         };
-    }, [id, messages, setAgents]);
+    }, [id, setAgents]); // Removed `messages` from dependency array
+
 
     const getAgents = useCallback(async (): Promise<void> => {
         try {
