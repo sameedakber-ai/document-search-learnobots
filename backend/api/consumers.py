@@ -26,6 +26,4 @@ class WorkflowConsumer(AsyncWebsocketConsumer):
     async def workflow_update(self, event):
         message = event['message']
         # Send message to WebSocket
-        await self.send(text_data=json.dumps({
-            'message': message
-        }))
+        await self.send(text_data=json.dumps(event))
