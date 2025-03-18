@@ -3,7 +3,34 @@ import React, {useCallback, useState} from "react";
 import {NodeProps} from "@xyflow/react";
 import {AgentNode} from "../nodeTypes";
 import {createPortal} from "react-dom";
-import ChatModal from "./ChatModal.tsx";
+
+import ChatModal from "./ChatModal";
+import {AgentData} from "../nodeTypes";
+import ChatModelModal from "./ChatModelModal.tsx";
+import BaseModal from "./BaseModal.tsx";
+
+const getModal = (
+    type: string,
+    id: string,
+    isOpen: boolean,
+    onClose: () => void,
+    data: AgentData
+): JSX.Element | null => {
+    switch (type) {
+        case "chat":
+            return <ChatModal id={id} isOpen={isOpen} onClose={onClose} data={data}/>;
+        case "chatTrigger":
+            return <ChatModal id={id} isOpen={isOpen} onClose={onClose} data={data}/>;
+        case "documentLoader":
+            return <ChatModal id={id} isOpen={isOpen} onClose={onClose} data={data}/>;
+        case "memory":
+            return <ChatModal id={id} isOpen={isOpen} onClose={onClose} data={data}/>;
+        case "chatModel":
+            return <ChatModelModal id={id} isOpen={isOpen} onClose={onClose} data={data}/>;
+        default:
+            return null;
+    }
+};
 
 const getIcon = (type: string) => {
     switch (type) {
@@ -121,15 +148,7 @@ const BaseNode = <T extends AgentNode>({
                         className="w-8 h-8 border-4 border-orange-300 border-t-transparent rounded-full animate-spin"></div>
                 </div>
             )}
-            {createPortal(
-                <ChatModal
-                    id={id}
-                    isOpen={isModalOpen}
-                    onClose={handleCloseModal}
-                    data={data}
-                />,
-                document.body
-            )}
+            <BaseModal id={id} isOpen={isModalOpen} onClose={handleCloseModal} data={data} />
         </div>
     );
 };
