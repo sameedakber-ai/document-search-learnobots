@@ -1,15 +1,16 @@
 from django.urls import path
-from .views import DocumentUploadView, ChatView, NodeCreateView, EdgeCreateView, NodeListView, EdgeListView, \
-    DocumentListView, NodeDeleteView, NodeUpdateView
+from .views import FileUploadView, WorkflowListView, WorkflowCreateView, WorkflowAgentsListView, FileListView, \
+    AgentCreateView, MemoryCreateView, WorkflowChatMemoriesListView, WorkflowStartView, AgentDeleteView
 
 urlpatterns = [
-    path('upload/', DocumentUploadView.as_view(), name='upload'),
-    path('chat/', ChatView.as_view(), name='chat'),
-    path('node/create/', NodeCreateView.as_view(), name='create_node'),
-    path('node/<slug:slug>/delete/', NodeDeleteView.as_view(), name='delete_node'),
-    path('node/<slug:slug>/update/', NodeUpdateView.as_view(), name='update_node'),
-    path('edge/create/', EdgeCreateView.as_view(), name='create_edge'),
-    path('nodes/', NodeListView.as_view(), name='list_nodes'),
-    path('edges/', EdgeListView.as_view(), name='list_edges'),
-    path('documents/', DocumentListView.as_view(), name='list_documents'),
+    path('upload/<slug:slug>/', FileUploadView.as_view(), name='upload_files'),
+    path('<slug:slug>/files/', FileListView.as_view(), name='agent_files'),
+    path('workflow/create/', WorkflowCreateView.as_view(), name='workflow_create'),
+    path('workflows/', WorkflowListView.as_view(), name='workflows'),
+    path('workflow/<str:id>/agents/', WorkflowAgentsListView.as_view(), name='workflow_agents'),
+    path('agent/create/', AgentCreateView.as_view(), name='agent_create'),
+    path('agent/<slug:slug>/delete/', AgentDeleteView.as_view(), name='agent_delete'),
+    path('memory/create/', MemoryCreateView.as_view(), name='create_memory'),
+    path('start-workflow/', WorkflowStartView.as_view(), name='start_workflow'),
+    path('workflow/<str:id>/memories/', WorkflowChatMemoriesListView.as_view(), name='workflow_chat_memories')
 ]
