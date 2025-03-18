@@ -9,3 +9,4 @@ class ApiConfig(AppConfig):
     def ready(self):
         import atexit
         atexit.register(driver.close)
+        import api.signals
