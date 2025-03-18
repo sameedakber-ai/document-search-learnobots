@@ -30,7 +30,7 @@ import ChatTriggerNode from "./ChatTriggerNode.tsx";
 import MemoryNode from "./MemoryNode.tsx";
 import ChatModelNode from "./ChatModelNode.tsx";
 
-import { AgentNode, AgentData, isAgentNodeOfType } from '../nodeTypes';
+import { AgentNode, AgentData, isAgentNodeOfType, getFlowType } from '../nodeTypes';
 import {MemoryItem} from "../nodeTypes.ts";
 
 import {useFuzzySearchList, Highlight} from '@nozbe/microfuzz/react'
@@ -177,6 +177,7 @@ const Workflow: React.FC = () => {
                     ...(data.type === "chatTrigger" ? {onOpenChat: handleOpenChat} : {}),
                     status: 'pending',
                     onDelete: handleDeleteNode,
+                    flowType: getFlowType(data.type)
                 },
                 position: {
                     x: data.properties.position_x,
@@ -333,7 +334,8 @@ const Workflow: React.FC = () => {
                     position_y: 0,
                 },
                 onDelete: handleDeleteNode,
-                status: 'pending'
+                status: 'pending',
+                flowType: 'main'
             };
         } else if (agentType === 'chat') {
             newAgentData = {
@@ -351,6 +353,7 @@ const Workflow: React.FC = () => {
                 },
                 status: 'pending',
                 onDelete: handleDeleteNode,
+                flowType: 'main'
             };
         } else if (agentType === 'chatTrigger') {
             newAgentData = {
@@ -366,6 +369,7 @@ const Workflow: React.FC = () => {
                 },
                 status: 'pending',
                 onDelete: handleDeleteNode,
+                flowType: 'trigger'
             }
         } else if (agentType === 'memory') {
             newAgentData = {
@@ -380,6 +384,7 @@ const Workflow: React.FC = () => {
                 },
                 status: 'pending',
                 onDelete: handleDeleteNode,
+                flowType: 'sub'
             }
         } else if (agentType === 'chatModel') {
             newAgentData = {
@@ -395,6 +400,7 @@ const Workflow: React.FC = () => {
                 },
                 status: 'pending',
                 onDelete: handleDeleteNode,
+                flowType: 'sub'
             }
         } else {
             return;
