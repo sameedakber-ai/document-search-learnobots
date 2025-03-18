@@ -60,203 +60,208 @@ def generate_knowledge(processing_job_id):
     return documents
 
 
+import json
+import logging
+from typing import Any, Dict, List, Set, Union, Optional, TypedDict
+
+from asgiref.sync import async_to_sync
+from celery import shared_task, Task
+from channels.layers import get_channel_layer
+
+class MemoryContent(TypedDict):
+    type: str
+    text: str
+
+class MemoryItem(TypedDict):
+    role: str
+    content: List[MemoryContent]
+
+
+logger = logging.getLogger(__name__)
+
+
+def send_update(
+        channel_layer: Any,
+        group_name: str,
+        node_id: Optional[str],
+        status: str,
+        message: str
+) -> None:
+    """Helper to send a workflow update via the channel layer."""
+    payload: Dict[str, Union[str, None]] = {
+        'type': 'workflow.update',
+        'status': status,
+        'message': message,
+    }
+    if node_id:
+        payload['node_id'] = node_id
+    async_to_sync(channel_layer.group_send)(group_name, payload)
+
+
 @shared_task(bind=True)
-def process_workflow(self, node_id, trigger_id, input):
+def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str) -> List[str]:
+    """
+    Process the workflow by traversing agents starting at the trigger node.
+    Returns a list of final outputs.
+    """
     channel_layer = get_channel_layer()
     group_name = f'workflow_{node_id}'
 
+    # Notify that the workflow is starting.
+    send_update(channel_layer, group_name, None, 'info', "Workflow starting ...")
+
     workflow = Workflow.objects.get(pk=node_id)
     chat_trigger_node = Agent.objects.get(slug=trigger_id)
-    initial_input = ChatTriggerEvent(output=input)
+    initial_input: ChatTriggerEvent = ChatTriggerEvent(output=input_text)
 
-    def process_node(current_agent, agent_input, visited):
-        """
-        Process the current agent and recursively traverse its next_agents.
-        Avoid cycles using the visited set. Returns a list of final outputs.
-        """
-        # Process the current agent if needed
+    def process_node(
+            current_agent: Agent,
+            agent_input: Union[ChatTriggerEvent, ChatEvent],
+            visited: Set[Any]
+    ) -> List[str]:
+        """Recursively process an agent and its successors."""
+        send_update(channel_layer, group_name, str(current_agent.slug), 'running',
+                    f"{current_agent.type} in progress...")
 
-        async_to_sync(channel_layer.group_send)(
-            group_name,
-            {
-                'type': 'workflow.update',
-                'message': f"{current_agent.type} in progress..."
-            }
-        )
-
-        if current_agent.type == 'chatTrigger':
-            agent_input = ChatTriggerEvent(output=agent_input.output)
-            memories = current_agent.properties.get('memories', '[]')
-            new_message = {
-                "role": "user",
-                "content": [{
-                    "type": "text",
-                    "text": agent_input.output
-                }]
-            }
-            memories.extend(new_message)
-            current_agent.properties['memories'] = json.dumps(memories)
-
-        if current_agent.type == 'chat':
-            if not current_agent.chat_model_node:
-                return []
-            chat_model = current_agent.chat_model_node.properties.get('model', '[]')
-            if not chat_model:
-                return []
-            chat_memory = []
-            if current_agent.memory_node:
-                chat_memory = current_agent.memory_node.properties.get('memories', '[]')
-
-            messages = [
-                {
-                    "role": "system",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": """
-                                Give a user query, answer it the best you can as a helpful assistant. Use emojis to appear more personable. Return a structured JSON in the following format:
-
-                                ### Instructions:
-
-                                1. **output**:
-                                   - The response to the user query
-
-                                ### Example:
-
-                                For the input text:
-                                "What is the capital of france?"
-
-                                The response should look like this:
-
-                                ```json
-                                {
-                                  "output": "The capital of france is Paris."
-                                }
-                                ```
-                            """
-                        }
-                    ],
-                }
-            ]
-
-            messages.extend(chat_memory)
-
-            messages.append(
-                {
+        try:
+            if current_agent.type == 'chatTrigger':
+                # Process chatTrigger node: update its memories.
+                agent_input = ChatTriggerEvent(output=agent_input.output)
+                memories_raw = current_agent.properties.get('memories', '[]')
+                try:
+                    memories = json.loads(memories_raw) if isinstance(memories_raw, str) else memories_raw
+                except json.JSONDecodeError:
+                    memories = []
+                new_message = {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f'{agent_input.output}'
-                        }
-                    ]
+                    "content": [{
+                        "type": "text",
+                        "text": agent_input.output
+                    }]
                 }
-            )
+                memories.append(new_message)
+                current_agent.properties['memories'] = json.dumps(memories)
 
-            original_user_message = agent_input.output
+            elif current_agent.type == 'chat':
+                # Process chat node: call external API and update memory if available.
+                if not current_agent.chat_model_node:
+                    return []
+                chat_model = current_agent.chat_model_node.properties.get('model', '')
+                if not chat_model:
+                    return []
+                chat_memory: List[MemoryItem] = []
+                if current_agent.memory_node:
+                    mem_raw = current_agent.memory_node.properties.get('memories', '[]')
+                    try:
+                        chat_memory = json.loads(mem_raw) if isinstance(mem_raw, str) else mem_raw
+                    except json.JSONDecodeError:
+                        chat_memory = []
+                messages: List[Dict[str, Any]] = [{
+                    "role": "system",
+                    "content": [{
+                        "type": "text",
+                        "text": (
+                            "Give a user query, answer it the best you can as a helpful assistant. "
+                            "Use emojis to appear more personable. Return a structured JSON in the following format:\n\n"
+                            "### Instructions:\n\n"
+                            "1. **output**:\n   - The response to the user query\n\n"
+                            "### Example:\n\n"
+                            "For the input text:\n"
+                            "\"What is the capital of france?\"\n\n"
+                            "The response should look like this:\n\n"
+                            "```json\n"
+                            "{\n  \"output\": \"The capital of france is Paris.\"\n}\n"
+                            "```"
+                        )
+                    }]
+                }]
+                messages.extend(chat_memory)
+                messages.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "text",
+                        "text": agent_input.output
+                    }]
+                })
+                original_user_message = agent_input.output
 
-            # Call the API
-            response = client.chat.completions.create(
-                model=chat_model,
-                messages=messages,
-            )
+                send_update(channel_layer, group_name, str(current_agent.chat_model_node.slug), 'running',
+                            f"{current_agent.chat_model_node.type} in progress...")
 
-            raw_content = response.choices[0].message.content.strip()
-
-            # Remove markdown formatting if present
-            if raw_content.startswith("```json") and raw_content.endswith("```"):
-                raw_content = raw_content[7:-3].strip()
-
-            data = json.loads(raw_content)
-            chat_data = ChatEvent(**data)
-            # Update the agent input with the output of the current node
-            agent_input = chat_data
-
-            if current_agent.memory_node:
-                async_to_sync(channel_layer.group_send)(
-                    group_name,
-                    {
-                        'type': 'workflow.update',
-                        'message': f"{current_agent.memory_node.type} in progress..."
-                    }
+                # Call the external chat API.
+                response = client.chat.completions.create(
+                    model=chat_model,
+                    messages=messages,
                 )
-                # Safely load the memory; default to an empty list if not present.
-                memories_str = current_agent.memory_node.properties.get('memories', '[]')
-                chat_memory = json.loads(memories_str)
+                raw_content = response.choices[0].message.content.strip()
+                if raw_content.startswith("```json") and raw_content.endswith("```"):
+                    raw_content = raw_content[7:-3].strip()
+                data_dict = json.loads(raw_content)
+                chat_data = ChatEvent(**data_dict)
+                agent_input = chat_data
 
-                new_messages = [
-                    {
-                        "role": "user",
-                        "content": [{
-                            "type": "text",
-                            "text": original_user_message
-                        }]
-                    },
-                    {
-                        "role": "assistant",
-                        "content": [{
-                            "type": "text",
-                            "text": chat_data.output
-                        }]
-                    }
-                ]
-                chat_memory.extend(new_messages)
-                # Update the memory field. Make sure to update the dict key.
-                current_agent.memory_node.properties['memories'] = json.dumps(chat_memory)
-                current_agent.memory_node.save()
+                send_update(channel_layer, group_name, str(current_agent.chat_model_node.slug), 'completed',
+                            f"{current_agent.chat_model_node.type} completed.")
 
-        # Retrieve next agents
-        next_agents = list(current_agent.next_agents.all())
-        # If there are no more agents, this branch is finished—return the output.
-        if not next_agents:
-            return [agent_input.output]
+                if current_agent.memory_node:
+                    send_update(channel_layer, group_name, str(current_agent.memory_node.slug), 'running',
+                                f"{current_agent.memory_node.type} in progress...")
+                    try:
+                        mem_str = current_agent.memory_node.properties.get('memories', '[]')
+                        try:
+                            chat_memory_list = json.loads(mem_str) if isinstance(mem_str, str) else mem_str
+                        except json.JSONDecodeError:
+                            chat_memory_list = []
+                        new_messages: List[MemoryItem] = [
+                            {
+                                "role": "user",
+                                "content": [{
+                                    "type": "text",
+                                    "text": original_user_message
+                                }]
+                            },
+                            {
+                                "role": "assistant",
+                                "content": [{
+                                    "type": "text",
+                                    "text": chat_data.output
+                                }]
+                            }
+                        ]
+                        chat_memory_list.extend(new_messages)
+                        current_agent.memory_node.properties['memories'] = json.dumps(chat_memory_list)
+                        current_agent.memory_node.save()
+                        send_update(channel_layer, group_name, str(current_agent.memory_node.slug), 'completed',
+                                    f"{current_agent.memory_node.type} completed.")
+                    except Exception as e:
+                        logger.exception("Error updating memory node for agent %s", current_agent.slug)
+                        send_update(channel_layer, group_name, str(current_agent.memory_node.slug), 'failed',
+                                    f"{current_agent.memory_node.type} failed.")
 
-        # Otherwise, process each next agent recursively.
-        outputs = []
-        for next_agent in next_agents:
-            if next_agent.id in visited:
-                continue  # Skip already visited nodes to avoid cycles.
-            # Use a new visited set for each branch (or update the same if you want to prevent revisiting common nodes)
-            new_visited = visited.copy()
-            new_visited.add(next_agent.id)
-            branch_outputs = process_node(next_agent, agent_input, new_visited)
-            outputs.extend(branch_outputs)
-        return outputs
+            # Always signal completion for the current agent.
+            send_update(channel_layer, group_name, str(current_agent.slug), 'completed',
+                        f"{current_agent.type} completed.")
 
-    # Initialize the visited set with the starting node
+            # Retrieve next agents.
+            next_agents = list(current_agent.next_agents.all())
+            if not next_agents:
+                return [agent_input.output]
+
+            outputs: List[str] = []
+            for next_agent in next_agents:
+                if next_agent.id in visited:
+                    continue  # Avoid cycles.
+                new_visited = visited.copy()
+                new_visited.add(next_agent.id)
+                outputs.extend(process_node(next_agent, agent_input, new_visited))
+            return outputs
+
+        except Exception as exc:
+            logger.exception("Error processing agent %s", current_agent.slug)
+            send_update(channel_layer, group_name, str(current_agent.slug), 'failed',
+                        f"{current_agent.type} failed.")
+            return []
+
     outputs = process_node(chat_trigger_node, initial_input, visited={chat_trigger_node.id})
-    # Depending on your needs, you could choose to return all outputs or combine them.
-    # For example, here we return the list of outputs.
-
-    async_to_sync(channel_layer.group_send)(
-        group_name,
-        {
-            'type': 'workflow.update',
-            'message': "Workflow completed."
-        }
-    )
-
+    send_update(channel_layer, group_name, None, 'info', "Workflow completed.")
     return outputs
-
-    # # Simulate processing steps
-    # steps = ["Initializing", "Running Agent A", "Running Agent B", "Finalizing"]
-    # for step in steps:
-    #     # Send progress update
-    #     async_to_sync(channel_layer.group_send)(
-    #         group_name,
-    #         {
-    #             'type': 'workflow.update',
-    #             'message': f"{step} in progress..."
-    #         }
-    #     )
-    #     time.sleep(2)  # simulate time taken for each step
-    #
-    # # Send completion update
-    # async_to_sync(channel_layer.group_send)(
-    #     group_name,
-    #     {
-    #         'type': 'workflow.update',
-    #         'message': "Workflow completed."
-    #     }
-    # )
-    # return "done"
