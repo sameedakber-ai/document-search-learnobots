@@ -122,6 +122,10 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
 
     workflow = Workflow.objects.get(pk=node_id)
     trigger_node = Agent.objects.get(slug=trigger_id)
+    send_update(channel_layer, group_name, str(trigger_node.slug), 'running',
+                f"{trigger_node.type} in progress...")
+
+    # Prepare the initial input based on trigger node type.
     if trigger_node.type == 'chatTrigger':
         initial_input: ChatTriggerEvent = ChatTriggerEvent(output=input_text)
     elif trigger_node.type == 'documentLoader':
@@ -134,18 +138,23 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
                 os.remove(f'media/{file_path}')
             except Exception as e:
                 print("Cannot remove file: ", e)
-        initial_input: ElementList = ElementList(output=[element.model_dump() for element in texts])
+        initial_input: ElementList = ElementList(
+            output=[element.model_dump() for element in texts]
+        )
+    else:
+        initial_input = ChatTriggerEvent(output=input_text)  # fallback
 
-    def process_node(
-            current_agent: Agent,
-            agent_input: Union[ChatTriggerEvent, ChatEvent],
-            visited: Set[Any]
-    ) -> List[str]:
+    send_update(channel_layer, group_name, str(trigger_node.slug), 'completed',
+                f"{trigger_node.type} completed.")
+
+    def process_node(current_agent: Agent,
+                     agent_input: Union[ChatTriggerEvent, ChatEvent],
+                     visited: Set[Any]) -> List[str]:
         """Recursively process an agent and its successors."""
         send_update(channel_layer, group_name, str(current_agent.slug), 'running',
                     f"{current_agent.type} in progress...")
-
         try:
+            # Handle processing based on the agent type.
             if current_agent.type == 'documentLoader':
                 agent_input = ElementList(output=agent_input.output)
             elif current_agent.type == 'vectorStore':
@@ -153,7 +162,7 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
                     print(element.text)
                     print("\n")
             elif current_agent.type == 'chatTrigger':
-                # Process chatTrigger node: update its memories.
+                # Update memories for a chatTrigger.
                 agent_input = ChatTriggerEvent(output=agent_input.output)
                 memories_raw = current_agent.properties.get('memories', '[]')
                 try:
@@ -169,23 +178,30 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
                 }
                 memories.append(new_message)
                 current_agent.properties['memories'] = json.dumps(memories)
-
             elif current_agent.type == 'chat':
-                # Process chat node: call external API and update memory if available.
-                if not current_agent.chat_model_node:
+                # Retrieve the one-to-one connections for chat_model and memory.
+                chat_model_conn = current_agent.connections_out.filter(connection_type='chat_model').first()
+                if not chat_model_conn:
                     return []
-                chat_model = current_agent.chat_model_node.properties.get('model', '')
+                chat_model_agent = chat_model_conn.target
+                chat_model = chat_model_agent.properties.get('model', '')
                 if not chat_model:
                     return []
-                print(f"\n\n\n{chat_model}\n\n\n")
-                chat_memory: List[MemoryItem] = []
-                if current_agent.memory_node:
-                    mem_raw = current_agent.memory_node.properties.get('memories', '[]')
+
+                send_update(channel_layer, group_name, str(chat_model_agent.slug), 'running',
+                            f"{chat_model_agent.type} in progress...")
+
+                memory_conn = current_agent.connections_out.filter(connection_type='memory').first()
+                chat_memory = []
+                if memory_conn:
+                    memory_agent = memory_conn.target
+                    mem_raw = memory_agent.properties.get('memories', '[]')
                     try:
                         chat_memory = json.loads(mem_raw) if isinstance(mem_raw, str) else mem_raw
                     except json.JSONDecodeError:
                         chat_memory = []
-                messages: List[Dict[str, Any]] = [{
+                # Construct the messages for the external chat API.
+                messages = [{
                     "role": "system",
                     "content": [{
                         "type": "text",
@@ -214,21 +230,16 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
                 })
                 original_user_message = agent_input.output
 
-                print(f"\n\n\n{messages}\n\n\n")
-
-                send_update(channel_layer, group_name, str(current_agent.chat_model_node.slug), 'running',
-                            f"{current_agent.chat_model_node.type} in progress...")
-
                 try:
-                    # Call the external chat API.
-                    response = client.chat.completions.create(
+                    response = client.beta.chat.completions.parse(
                         model='gpt-4o-mini',
-                        messages=messages
+                        messages=messages,
+                        response_format=ChatEvent
                     )
-                    print(f"\n\n\n{response}\n\n\n")
                 except Exception as e:
-                    send_update(channel_layer, group_name, str(current_agent.chat_model_node.slug), 'failed',
-                                f"{current_agent.chat_model_node.type} failed.")
+                    send_update(channel_layer, group_name, str(chat_model_agent.slug), 'failed',
+                                f"{chat_model_agent.type} failed.")
+                    return []
                 raw_content = response.choices[0].message.content.strip()
                 if raw_content.startswith("```json") and raw_content.endswith("```"):
                     raw_content = raw_content[7:-3].strip()
@@ -236,19 +247,20 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
                 chat_data = ChatEvent(**data_dict)
                 agent_input = chat_data
 
-                send_update(channel_layer, group_name, str(current_agent.chat_model_node.slug), 'completed',
-                            f"{current_agent.chat_model_node.type} completed.")
+                send_update(channel_layer, group_name, str(chat_model_agent.slug), 'completed',
+                            f"{chat_model_agent.type} completed.")
 
-                if current_agent.memory_node:
-                    send_update(channel_layer, group_name, str(current_agent.memory_node.slug), 'running',
-                                f"{current_agent.memory_node.type} in progress...")
+                if memory_conn:
+                    memory_agent = memory_conn.target
+                    send_update(channel_layer, group_name, str(memory_agent.slug), 'running',
+                                f"{memory_agent.type} in progress...")
                     try:
-                        mem_str = current_agent.memory_node.properties.get('memories', '[]')
+                        mem_str = memory_agent.properties.get('memories', '[]')
                         try:
                             chat_memory_list = json.loads(mem_str) if isinstance(mem_str, str) else mem_str
                         except json.JSONDecodeError:
                             chat_memory_list = []
-                        new_messages: List[MemoryItem] = [
+                        new_messages = [
                             {
                                 "role": "user",
                                 "content": [{
@@ -265,25 +277,26 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
                             }
                         ]
                         chat_memory_list.extend(new_messages)
-                        current_agent.memory_node.properties['memories'] = json.dumps(chat_memory_list)
-                        current_agent.memory_node.save()
-                        send_update(channel_layer, group_name, str(current_agent.memory_node.slug), 'completed',
-                                    f"{current_agent.memory_node.type} completed.")
+                        memory_agent.properties['memories'] = json.dumps(chat_memory_list)
+                        memory_agent.save()
+                        send_update(channel_layer, group_name, str(memory_agent.slug), 'completed',
+                                    f"{memory_agent.type} completed.")
                     except Exception as e:
                         logger.exception("Error updating memory node for agent %s", current_agent.slug)
-                        send_update(channel_layer, group_name, str(current_agent.memory_node.slug), 'failed',
-                                    f"{current_agent.memory_node.type} failed.")
+                        send_update(channel_layer, group_name, str(memory_agent.slug), 'failed',
+                                    f"{memory_agent.type} failed.")
 
-            # Always signal completion for the current agent.
+            # Signal completion for the current agent.
             send_update(channel_layer, group_name, str(current_agent.slug), 'completed',
                         f"{current_agent.type} completed.")
 
-            # Retrieve next agents.
-            next_agents = list(current_agent.next_agents.all())
+            # Retrieve next agents from outgoing connections of type 'next'.
+            next_conns = current_agent.connections_out.filter(connection_type='next')
+            next_agents = [conn.target for conn in next_conns]
             if not next_agents:
                 return [agent_input.output]
 
-            outputs: List[str] = []
+            outputs = []
             for next_agent in next_agents:
                 if next_agent.id in visited:
                     continue  # Avoid cycles.

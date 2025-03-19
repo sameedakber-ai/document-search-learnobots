@@ -14,7 +14,7 @@ from langchain_community.chat_models import (
     ChatOllama,
     ChatOpenAI
 )
-from langchain_community.document_loaders import TextLoader
+from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_community.embeddings import (
     AzureOpenAIEmbeddings,
     OllamaEmbeddings,
@@ -474,24 +474,40 @@ class DocumentLoader:
         ]
 
     def load_pdf(self, file_path, include_images=False):
-        raw_pdf_elements = self.extract_raw_pdf_elements(file_path=file_path)
-        categorized_elements_pages = self.combine_text_elements(
-            self.generate_elemental_structure(raw_elements=raw_pdf_elements, include_images=include_images))
-        elements = []
-        for categorized_elements, page_number in categorized_elements_pages:
-            text = self.convert_elements_to_text(categorized_elements, fine_tune=False)
-            elements.append(
-                Element(
-                    type='text',
-                    text=self.convert_elements_to_text(categorized_elements, fine_tune=False),
-                    metadata={
-                        'source': Path(file_path).name,
-                        'page_number': page_number,
-                        'uid': hashlib.sha256(str.encode(text)).hexdigest()
-                    }
-                )
-            )
-        return elements
+        try:
+            documents = [document.page_content for document in PyPDFLoader(file_path).load()]
+        except RuntimeError or UnicodeDecodeError or FileNotFoundError:
+            return []
+
+        return [
+            Element(
+                type="text",
+                text=document,
+                metadata = {
+                    'source': Path(file_path).name,
+                    'uid': hashlib.sha256(str.encode(document)).hexdigest()
+                }
+            ) for document in documents
+        ]
+
+        # raw_pdf_elements = self.extract_raw_pdf_elements(file_path=file_path)
+        # categorized_elements_pages = self.combine_text_elements(
+        #     self.generate_elemental_structure(raw_elements=raw_pdf_elements, include_images=include_images))
+        # elements = []
+        # for categorized_elements, page_number in categorized_elements_pages:
+        #     text = self.convert_elements_to_text(categorized_elements, fine_tune=False)
+        #     elements.append(
+        #         Element(
+        #             type='text',
+        #             text=self.convert_elements_to_text(categorized_elements, fine_tune=False),
+        #             metadata={
+        #                 'source': Path(file_path).name,
+        #                 'page_number': page_number,
+        #                 'uid': hashlib.sha256(str.encode(text)).hexdigest()
+        #             }
+        #         )
+        #     )
+        # return elements
 
 
 class KnowledgeGenerator:
