@@ -3,7 +3,7 @@ from .views import FileUploadView, WorkflowListView, WorkflowCreateView, Workflo
     AgentCreateView, MemoryCreateView, WorkflowChatMemoriesListView, WorkflowStartView, AgentDeleteView
 
 urlpatterns = [
-    path('upload/<slug:slug>/', FileUploadView.as_view(), name='upload_files'),
+    path('<slug:slug>/files/upload/', FileUploadView.as_view(), name='upload_files'),
     path('<slug:slug>/files/', FileListView.as_view(), name='agent_files'),
     path('workflow/create/', WorkflowCreateView.as_view(), name='workflow_create'),
     path('workflows/', WorkflowListView.as_view(), name='workflows'),

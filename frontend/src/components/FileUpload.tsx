@@ -4,10 +4,10 @@ import api from "../api.ts";
 
 interface FileUploadProps {
     id: string;
-    onDocumentsChange?: () => void;
+    onFilesUpdate: (nodeId: string) => void;
 }
 
-const FileUpload: FC<FileUploadProps> = ({id, onDocumentsChange}) => {
+const FileUpload: FC<FileUploadProps> = ({id, onFilesUpdate}) => {
     const [files, setFiles] = useState<File[]>([]);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [isUploading, setIsUploading] = useState(false);
@@ -41,7 +41,7 @@ const FileUpload: FC<FileUploadProps> = ({id, onDocumentsChange}) => {
                 }, 100);
             });
             try {
-                await api.post('/api/upload/', formData, {
+                await api.post(`/api/${id}/files/upload/`, formData, {
                     headers: {
                         'Content-Type': 'multipart/form-data',
                     },
@@ -57,9 +57,9 @@ const FileUpload: FC<FileUploadProps> = ({id, onDocumentsChange}) => {
 
         // After uploading, fetch updated documents from the backend
         try {
-            await api.get("/api/documents/");
-            if (onDocumentsChange) {
-                onDocumentsChange();
+            if (onFilesUpdate) {
+                console.log(id);
+                onFilesUpdate(id);
             }
         } catch (error) {
             console.error("Error fetching updated documents:", error);
@@ -79,7 +79,7 @@ const FileUpload: FC<FileUploadProps> = ({id, onDocumentsChange}) => {
     };
 
     return (
-        <div className="max-w-lg mt-4 p-4 bg-red-100 rounded-2xl shadow-md border-1 border-red-500">
+        <div className="max-w-lg mt-4 p-4 rounded-2xl shadow-md border-1 border-gray-400">
             <h1 className="text-2xl font-semibold mb-4">File Upload</h1>
             <div>
                 <input

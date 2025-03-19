@@ -5,6 +5,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Optional, List, Dict
+from .models import Document as DocumentFile
 
 import numpy as np
 from django.conf.global_settings import MEDIA_ROOT
@@ -438,6 +439,7 @@ class DocumentLoader:
             for text_split in text_splitter.split_documents([md_header_split]):
                 text_splits.append(text_split.page_content)
                 text_split_sections.append(md_header_split_section)
+        print(f"\n\n\n{text_splits}\n\n\n")
 
         return [
             Element(
@@ -606,7 +608,7 @@ class KnowledgeGenerator:
                                 {
                                     "type": "text",
                                     "text": """
-                              Given the following text and some entity types and relationsip types, identify and extract entities and their relationships using only the types mentioned, then return a structured JSON in a format compatible with a knowledge graph. Use the following instructions for the JSON format:
+                              Given the following text and some entity types and relationship types, identify and extract entities and their relationships using only the types mentioned, then return a structured JSON in a format compatible with a knowledge graph. Use the following instructions for the JSON format:
 
                                 ### Instructions:
 
@@ -698,7 +700,6 @@ class KnowledgeGenerator:
     def generate_knowledge(self) -> KnowledgeGraphData:
         graph = Neo4jGraph()
         types = graph.get_unique_node_and_relationship_types()
-        print("\n\ntypes: \n", types, "\n\n")
         documents = []
 
         for text_element in self.elements:
@@ -775,7 +776,7 @@ class Neo4jGraph:
         return label.replace(" ", "_")
 
     # Insert document with node2vec embedding
-    def insert_document(self, document: Document):
+    def insert_document(self, document: Document, slug: str):
         """
         Inserts a document into the graph with its text embedding and associated knowledge.
         """
@@ -785,7 +786,7 @@ class Neo4jGraph:
             # Insert the document as a node with embedding
             doc_id = hashlib.sha256(str.encode(document.text)).hexdigest()
             doc_properties = {"text": document.text, "embedding": embedding}
-            session.write_transaction(self._create_or_update_document_node, doc_id, doc_properties)
+            session.write_transaction(self._create_or_update_document_node, doc_id, doc_properties, slug)
 
             special_entity_node = EntityNode(id=f'Source-{document.metadata['source']}', label='Source',
                                              name=document.metadata['source'], properties={})
@@ -860,16 +861,16 @@ class Neo4jGraph:
             """)
 
     @staticmethod
-    def _create_or_update_document_node(tx, doc_id: str, properties: dict):
+    def _create_or_update_document_node(tx, doc_id: str, properties: dict, slug: str):
         """
         Creates or updates a document node in the graph.
         """
         tx.run(
             """
             MERGE (d:Document {id: $doc_id})
-            SET d += $properties
+            SET d += $properties, d.agent_slug = $slug
             """,
-            doc_id=doc_id, properties=properties
+            doc_id=doc_id, properties=properties, slug=slug
         )
 
     @staticmethod
@@ -1041,16 +1042,28 @@ class Neo4jGraph:
 
     def get_unique_node_and_relationship_types(self):
         """
-        Retrieves unique node labels (types) and relationship types from the graph.
+        Retrieves unique node labels (types) and relationship types from document nodes
+        that have the specified agent_slug.
         Returns a dictionary with 'node_types' and 'relationship_types'.
         """
         with self.driver.session() as session:
-            # Get unique node labels
-            node_result = session.run("MATCH (n) RETURN DISTINCT labels(n) AS nodeLabels")
+            # Get unique node labels for document nodes with the provided agent_slug.
+            node_result = session.run(
+                """
+                MATCH (d:Document)
+                RETURN DISTINCT labels(d) AS nodeLabels
+                """,
+            )
             node_types = {label for record in node_result for label in record["nodeLabels"]}
 
-            # Get unique relationship types
-            rel_result = session.run("MATCH ()-[r]->() RETURN DISTINCT type(r) AS relationshipType")
+            # Get unique relationship types for relationships originating from document nodes with the provided agent_slug.
+            rel_result = session.run(
+                """
+                MATCH (d:Document)-[r]->(n)
+                WHERE d.agent_slug = $agent_slug
+                RETURN DISTINCT type(r) AS relationshipType
+                """,
+            )
             relationship_types = {record["relationshipType"] for record in rel_result}
 
         return {
@@ -1393,6 +1406,94 @@ class Neo4jGraph:
         return final_documents
 
 
+# Define a simple class to hold pipeline node information.
+class PipelineNode:
+    def __init__(self, slug, node_type, properties):
+        self.slug = slug
+        self.node_type = node_type
+        self.properties = properties
+        self.children = []  # Outgoing edges: nodes that depend on this node.
+        self.parents = []  # Incoming edges: nodes that feed into this node.
+
+    def __repr__(self):
+        return f"PipelineNode({self.slug}, {self.node_type})"
+
+
+# Dummy processing functions for different node types.
+def process_loader(properties, input_data, mode=None):
+    slug = properties.get("slug")
+    print(f"--> [Loader] Processing {slug} with input: {input_data}")
+    # Load Documents
+    documents = json.loads(properties.get('selectedDocuments'))
+    documents = [DocumentFile.objects.get(pk=document['id']) for document in documents]
+    graph = Neo4jGraph()
+    for document in documents:
+        elements = DocumentLoader(document=document).load()
+        documents, relationship_types = KnowledgeGenerator(elements=elements).generate_knowledge()
+        for document_x in documents:
+            try:
+                graph.insert_document(document=document_x, slug=slug)
+            except Exception as e:
+                print(e)
+                continue
+        graph.update_node2vec_embeddings(relationship_types=relationship_types)
+    return slug
+
+
+def process_chat_agent(properties, input_data, mode=None):
+    slug = properties.get("slug")
+    print(f"--> [ChatAgent] Processing {slug} with input: {input_data}")
+    # Simulate processing via an AI chat agent.
+    graph = Neo4jGraph()
+
+    if mode == "RAG":
+        # Retrieve relevant documents when in RAG mode.
+        similar_docs = graph.retrieve_relevant_documents_advanced(
+            query=properties.get('prompt'),
+            max_depth=2,
+            seed_docs=4,
+            min_final_docs=4
+        )
+        responses = ['']
+        for doc in similar_docs:
+            responses.append(
+                graph.generate_response(
+                    query=properties.get('prompt'),
+                    partial_response=responses[-1],
+                    document_text=doc['text']
+                )
+            )
+        complete_response = graph.generate_final_response(
+            query=properties.get('prompt'),
+            partial_responses=responses[-1]
+        )
+        print("RAG response:", complete_response)
+        graph.close()
+        return f"chat_response_from_{slug} (RAG)"
+    else:
+        # Standalone mode: use the stored 'context' property.
+        context = properties.get('context')
+        # Here you could call your LLM with the context; we'll simulate it.
+        response = f"chat_response_from_{slug} (standalone, context: {context})"
+        print("Standalone response:", response)
+        graph.close()
+        return response
+
+
+def process_generic(properties, input_data, mode=None):
+    slug = properties.get("slug")
+    print(f"--> [Generic] Processing {slug} with input: {input_data}")
+    return f"processed_{slug}"
+
+
+# Map node types to processing functions.
+PROCESSORS = {
+    "documentLoader": process_loader,
+    "askAI": process_chat_agent,
+    # Other node types can be added here.
+}
+
+
 class Neo4jNodes:
     def __init__(self):
         self.driver = get_driver()
@@ -1422,7 +1523,6 @@ class Neo4jNodes:
         :param user_id: User identifier.
         :return: The internal Neo4j node id.
         """
-        print("data: ", data)
 
         # Convert 'documents' if present.
         if 'documents' in data:
@@ -1430,7 +1530,6 @@ class Neo4jNodes:
             if not isinstance(data['documents'], list):
                 data['documents'] = [data['documents']]
             data['documents'] = json.dumps(data['documents'])
-            print("\n\nDocuments:\n---\n", data['documents'], "\n---\n\n")
 
         # Convert 'selectedDocuments' if present.
         if 'selectedDocuments' in data:
@@ -1438,7 +1537,6 @@ class Neo4jNodes:
             if not isinstance(data['selectedDocuments'], list):
                 data['selectedDocuments'] = [data['selectedDocuments']]
             data['selectedDocuments'] = json.dumps(data['selectedDocuments'])
-            print("\n\nSelected Documents:\n---\n", data['selectedDocuments'], "\n---\n\n")
 
         # Set the user id.
         data['user_id'] = user_id
@@ -1449,7 +1547,7 @@ class Neo4jNodes:
         with self.driver.session() as session:
             result = session.run(
                 """
-                MERGE (n:Node {slug: $slug})
+                MERGE (n:Node:Agent {slug: $slug})
                 ON CREATE SET n += $data
                 ON MATCH SET n += $data
                 WITH n
@@ -1484,7 +1582,7 @@ class Neo4jNodes:
         with self.driver.session() as session:
             result = session.run(
                 """
-                MATCH (n:Node)
+                MATCH (n:Node:Agent)
                 WHERE n.user_id = $user_id
                 RETURN id(n) AS id, n.slug AS slug,
                 CASE 
@@ -1504,6 +1602,7 @@ class Neo4jNodes:
                       type: n.type,
                       label: n.label,
                       canvasId: n.canvasId,
+                      temperature: n.temperature,
                       position_x: n.position_x,
                       position_y: n.position_y,
                       aiModel: n.aiModel,
@@ -1579,60 +1678,96 @@ class Neo4jNodes:
         return self.query(query, {"canvas_id": canvas_id}).data()
 
     def process_pipeline(self, canvas_id):
-        from collections import deque
-        root_nodes = self.get_root_nodes(canvas_id)
-        queue = deque(root_nodes)
-        processed = set()
+        with self.driver.session() as session:
+            # Retrieve all nodes with the label "Node" and explicitly get their labels.
+            nodes_result = session.run("MATCH (n:Node:Agent) RETURN n, labels(n) AS node_labels")
+            nodes_data = nodes_result.data()
+
+            # Build a dictionary mapping slug to PipelineNode.
+            nodes_dict = {}
+            for record in nodes_data:
+                n = record["n"]
+                slug = n.get("slug")
+                # Determine node type: if the node has a property "type", use it;
+                # otherwise, check the returned node_labels (ignoring the generic "Node" label).
+                node_type = n.get("type", "Node")
+                for label in record["node_labels"]:
+                    if label != "Node":
+                        node_type = label
+                        break
+                # Create our in-memory node.
+                nodes_dict[slug] = PipelineNode(slug, node_type, dict(n))
+
+            # --- STEP 2: Extract Edges ---
+        with self.driver.session() as session:
+            # Retrieve relationships with source and target slugs.
+            edges_result = session.run(
+                "MATCH (a:Node)-[r:CONNECTED]->(b:Node) RETURN a.slug AS source, b.slug AS target"
+            )
+            edges_data = edges_result.data()
+
+            # Build the graph: link source nodes to target nodes.
+            for record in edges_data:
+                source_slug = record["source"]
+                target_slug = record["target"]
+                if source_slug in nodes_dict and target_slug in nodes_dict:
+                    source_node = nodes_dict[source_slug]
+                    target_node = nodes_dict[target_slug]
+                    source_node.children.append(target_node)
+                    target_node.parents.append(source_node)
+
+        # --- STEP 3: Determine Execution Order via Topological Sorting ---
+        # Compute in-degree for each node.
+        in_degree = {slug: len(node.parents) for slug, node in nodes_dict.items()}
+        # Starting nodes: nodes with no incoming edges.
+        start_nodes = [node for slug, node in nodes_dict.items() if in_degree[slug] == 0]
+
+        if not start_nodes:
+            print("No starting nodes found – the graph may contain cycles!")
+            return
+
+        sorted_nodes = []
+        queue = start_nodes[:]
 
         while queue:
-            node = queue.popleft()
-            if node["node_id"] in processed:
-                continue
+            current = queue.pop(0)
+            sorted_nodes.append(current)
+            for child in current.children:
+                in_degree[child.slug] -= 1
+                if in_degree[child.slug] == 0:
+                    queue.append(child)
 
-            self.process_node(node)
-            processed.add(node["node_id"])
+        # Check if all nodes were sorted; if not, there is a cycle.
+        if len(sorted_nodes) != len(nodes_dict):
+            print("Warning: Cycle detected in the graph. "
+                  "Topological sort is incomplete, and additional cycle handling is needed.")
 
-            query = """
-            MATCH (n)-[:CONNECTED_TO]->(m)
-            WHERE id(n) = $node_id
-            RETURN id(m) AS next_node
-            """
-            next_nodes = self.query(query, {"node_id": node["node_id"]}).data()
-            for next_node in next_nodes:
-                queue.append(next_node)
+        # --- STEP 4: Execute the Pipeline ---
+        # A dictionary to hold each node's output.
+        node_outputs = {}
 
-    def process_node(self, node):
-        print(f"Processing Node: {node['label']}")
+        # Process nodes in the computed topological order.
+        for node in sorted_nodes:
+            # Gather inputs from all parent nodes.
+            if not node.parents:
+                input_data = None  # Could be replaced with an initial input value.
+            else:
+                parent_outputs = [node_outputs[parent.slug] for parent in node.parents if parent.slug in node_outputs]
+                input_data = parent_outputs[0] if len(parent_outputs) == 1 else parent_outputs
 
-    def process_pipeline_with_merging(self, canvas_id):
-        from collections import deque
-        query = """
-        MATCH (n:Node)-[:CONNECTED_TO]->(m:Node)
-        WHERE n.canvas_id = $canvas_id
-        RETURN id(n) AS parent, id(m) AS child
-        """
-        edges = self.query(query, {"canvas_id": canvas_id}).data()
+            # For ChatAgent nodes (mapped to "askAI"), decide the mode based on parent types.
+            mode = None
+            if node.node_type == "askAI":
+                # If any parent is a Loader agent (i.e., type "documentLoader"), switch to RAG mode.
+                mode = "RAG" if any(parent.node_type == "documentLoader" for parent in node.parents) else "standalone"
 
-        dependency_count = {}
-        for edge in edges:
-            dependency_count[edge["child"]] = dependency_count.get(edge["child"], 0) + 1
+            processor = PROCESSORS.get(node.node_type, process_generic)
+            print(f"Executing node {node.slug} of type {node.node_type} with mode: {mode}")
+            # Call the processor, passing the mode parameter.
+            output = processor(node.properties, input_data, mode=mode)
+            node_outputs[node.slug] = output
 
-        queue = deque(self.get_root_nodes(canvas_id))
-        processed = set()
-
-        while queue:
-            node = queue.popleft()
-            self.process_node(node)
-            processed.add(node["node_id"])
-
-            query = """
-            MATCH (n)-[:CONNECTED_TO]->(m)
-            WHERE id(n) = $node_id
-            RETURN id(m) AS next_node
-            """
-            next_nodes = self.query(query, {"node_id": node["node_id"]}).data()
-
-            for next_node in next_nodes:
-                dependency_count[next_node["next_node"]] -= 1
-                if dependency_count[next_node["next_node"]] == 0:
-                    queue.append(next_node)
+        # --- STEP 5: Final Output ---
+        print("\nPipeline execution completed. Final outputs by node:")
+        for slug, output in node_outputs.items():
+            print(f" - {slug}: {output}")

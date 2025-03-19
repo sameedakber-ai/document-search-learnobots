@@ -141,8 +141,6 @@ class WorkflowStartView(APIView):
         trigger_id = request.data.get('trigger_id')
         chat_input = request.data.get('input')
 
-        print(node_id, trigger_id, chat_input)
-
         outputs = process_workflow(node_id, trigger_id, chat_input)
 
         return Response({"status": "Workflow started", "outputs": outputs})

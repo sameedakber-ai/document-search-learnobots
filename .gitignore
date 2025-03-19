@@ -4,4 +4,6 @@ backend/db.*
 backend/media
 backend/api/migrations
 backend/.env
+backend/backend/__pycache__/
+backend/api/__pycache__
 neo4j

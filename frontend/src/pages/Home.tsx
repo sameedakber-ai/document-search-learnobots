@@ -1,13 +1,60 @@
-import FileUpload from "../components/FileUpload";
-import ChatComponent from "../components/ChatWindow";
-import CustomLessonFlow from "../components/CustomLessonFlow";
+import {ChangeEvent, FormEvent, useCallback, useEffect, useState} from "react";
+import api from "../api";
+
+export interface WorkflowData {
+    id: string;
+    name: string;
+}
+
+export interface WorkflowResponse {
+    id: string;
+    name: string;
+    data: string;
+    owner: number;
+}
 
 function Home() {
+    const [workflows, setWorkflows] = useState<WorkflowData[]>([]);
+    const [workflowName, setWorkflowName] = useState<string>('');
+
+    const getWorkflows = useCallback(async (): Promise<void> => {
+        try {
+            const res = await api.get('/api/workflows/');
+            const workflows: WorkflowData[] = res.data.map((workflowData: WorkflowResponse) => ({
+                id: workflowData.id,
+                name: workflowData.name
+            }));
+            setWorkflows(workflows);
+        } catch(error) {
+            alert(error);
+        }
+
+    }, []);
+
+    useEffect(() => {
+        const fetchData = async () => {
+            await getWorkflows();
+        }
+        fetchData().then(r => {
+            console.log(r)
+        });
+    }, [getWorkflows]);
+
+    const handleCreateWorkflow = useCallback(async (e: FormEvent<HTMLFormElement>): Promise<void> => {
+        e.preventDefault();
+        const res = await api.post('/api/workflow/create/', {'name': workflowName});
+        setWorkflows((prevWorkflows) => [...prevWorkflows, res.data]);
+    }, [workflowName]);
+
+    const handleChangeName = (e: ChangeEvent<HTMLInputElement>) => {
+        setWorkflowName(e.target.value);
+    }
+
     return (
-        <div id="home-id">
-            <div className="p-4 bg-gray-100 flex justify-between items-center">
+        <div id="home-id" className="h-screen">
+            <div className="p-4 flex justify-between items-center border-b-1 border-gray-400">
                 <a className="" href="/">
-                    <h1 className="text-2xl font-bold">AI Workflow Automation</h1>
+                    <h1 className="text-2xl">AI Workflow Automation</h1>
                 </a>
                 <div className="flex space-x-10">
                     <a className="text-lg" href="/profile">Profile</a>
@@ -15,10 +62,23 @@ function Home() {
                 </div>
             </div>
 
-            <div className="mt-6">
-                {/*<FileUpload />*/}
-                {/*<ChatComponent />*/}
-                <CustomLessonFlow />
+            <div className="bg-gray-50">
+                <div className="p-8">
+                    {
+                        workflows.map((workflow) => (
+                            <a href={`/workflows/${workflow.id}`}>
+                                <h2 className="text-2xl ">
+                                    {workflow.name}
+                                </h2>
+                            </a>
+                        ))
+                    }
+                </div>
+                <div className="flex items-center justify-center h-full">
+                    <form onSubmit={handleCreateWorkflow}>
+                        <input type="text" onChange={handleChangeName} value={workflowName} placeholder="New Workflow" className="border-2 p-2 rounded-lg"/>
+                    </form>
+                </div>
             </div>
         </div>
     )

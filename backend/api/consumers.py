@@ -25,5 +25,6 @@ class WorkflowConsumer(AsyncWebsocketConsumer):
     # Receive messages from the group
     async def workflow_update(self, event):
         message = event['message']
+        print(json.dumps(event))
         # Send message to WebSocket
         await self.send(text_data=json.dumps(event))

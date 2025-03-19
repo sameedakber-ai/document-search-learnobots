@@ -68,13 +68,23 @@ from asgiref.sync import async_to_sync
 from celery import shared_task, Task
 from channels.layers import get_channel_layer
 
+
 class MemoryContent(TypedDict):
     type: str
     text: str
 
+
 class MemoryItem(TypedDict):
     role: str
     content: List[MemoryContent]
+
+class Element(BaseModel):
+    type: str
+    text: Any
+    metadata: dict
+
+class ElementList(BaseModel):
+    output: List[Element]
 
 
 logger = logging.getLogger(__name__)
@@ -111,8 +121,20 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
     send_update(channel_layer, group_name, None, 'info', "Workflow starting ...")
 
     workflow = Workflow.objects.get(pk=node_id)
-    chat_trigger_node = Agent.objects.get(slug=trigger_id)
-    initial_input: ChatTriggerEvent = ChatTriggerEvent(output=input_text)
+    trigger_node = Agent.objects.get(slug=trigger_id)
+    if trigger_node.type == 'chatTrigger':
+        initial_input: ChatTriggerEvent = ChatTriggerEvent(output=input_text)
+    elif trigger_node.type == 'documentLoader':
+        texts = []
+        for file in trigger_node.files.all():
+            texts.extend(DocumentLoader(file).load())
+            file_path = file.file
+            try:
+                file.delete()
+                os.remove(f'media/{file_path}')
+            except Exception as e:
+                print("Cannot remove file: ", e)
+        initial_input: ElementList = ElementList(output=[element.model_dump() for element in texts])
 
     def process_node(
             current_agent: Agent,
@@ -124,7 +146,13 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
                     f"{current_agent.type} in progress...")
 
         try:
-            if current_agent.type == 'chatTrigger':
+            if current_agent.type == 'documentLoader':
+                agent_input = ElementList(output=agent_input.output)
+            elif current_agent.type == 'vectorStore':
+                for element in agent_input.output:
+                    print(element.text)
+                    print("\n")
+            elif current_agent.type == 'chatTrigger':
                 # Process chatTrigger node: update its memories.
                 agent_input = ChatTriggerEvent(output=agent_input.output)
                 memories_raw = current_agent.properties.get('memories', '[]')
@@ -149,6 +177,7 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
                 chat_model = current_agent.chat_model_node.properties.get('model', '')
                 if not chat_model:
                     return []
+                print(f"\n\n\n{chat_model}\n\n\n")
                 chat_memory: List[MemoryItem] = []
                 if current_agent.memory_node:
                     mem_raw = current_agent.memory_node.properties.get('memories', '[]')
@@ -185,14 +214,21 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
                 })
                 original_user_message = agent_input.output
 
+                print(f"\n\n\n{messages}\n\n\n")
+
                 send_update(channel_layer, group_name, str(current_agent.chat_model_node.slug), 'running',
                             f"{current_agent.chat_model_node.type} in progress...")
 
-                # Call the external chat API.
-                response = client.chat.completions.create(
-                    model=chat_model,
-                    messages=messages,
-                )
+                try:
+                    # Call the external chat API.
+                    response = client.chat.completions.create(
+                        model='gpt-4o-mini',
+                        messages=messages
+                    )
+                    print(f"\n\n\n{response}\n\n\n")
+                except Exception as e:
+                    send_update(channel_layer, group_name, str(current_agent.chat_model_node.slug), 'failed',
+                                f"{current_agent.chat_model_node.type} failed.")
                 raw_content = response.choices[0].message.content.strip()
                 if raw_content.startswith("```json") and raw_content.endswith("```"):
                     raw_content = raw_content[7:-3].strip()
@@ -257,11 +293,11 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
             return outputs
 
         except Exception as exc:
-            logger.exception("Error processing agent %s", current_agent.slug)
+            logger.exception("Error processing agent %s", current_agent.type)
             send_update(channel_layer, group_name, str(current_agent.slug), 'failed',
                         f"{current_agent.type} failed.")
             return []
 
-    outputs = process_node(chat_trigger_node, initial_input, visited={chat_trigger_node.id})
+    outputs = process_node(trigger_node, initial_input, visited={trigger_node.id})
     send_update(channel_layer, group_name, None, 'info', "Workflow completed.")
     return outputs

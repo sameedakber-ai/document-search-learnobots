@@ -28,8 +28,9 @@ import ChatAgent from "./ChatAgent.tsx";
 import ChatTriggerNode from "./ChatTriggerNode.tsx";
 import MemoryNode from "./MemoryNode.tsx";
 import ChatModelNode from "./ChatModelNode.tsx";
+import VectorStoreNode from "./VectorStoreNode.tsx";
 
-import {AgentNode, AgentData, isAgentNodeOfType, getFlowType} from '../nodeTypes';
+import {AgentNode, AgentData, isAgentNodeOfType, getFlowType, DocumentLoaderProperties} from '../nodeTypes';
 import {MemoryItem} from "../nodeTypes.ts";
 
 import {useFuzzySearchList, Highlight} from '@nozbe/microfuzz/react'
@@ -39,10 +40,25 @@ const nodeTypes = {
     chat: ChatAgent,
     chatTrigger: ChatTriggerNode,
     memory: MemoryNode,
-    chatModel: ChatModelNode
+    chatModel: ChatModelNode,
+    vectorStore: VectorStoreNode
 };
 
 const edgeTypes = {};
+
+export interface FileResponse {
+    id: string;
+    file: string;
+    date: string;
+    agent: string;
+}
+
+export interface FileType {
+    id: string;
+    extension: string;
+    name: string;
+    date: string;
+}
 
 export interface OnConnectParams {
     source: string;
@@ -79,6 +95,11 @@ const nodeLabels = [
         key: 5,
         name: 'chatModel',
         description: 'Chat Model for conversational Chat AI Agents',
+    },
+    {
+        key: 6,
+        name: 'vectorStore',
+        description: 'Information retrieval from documents',
     }
 ];
 
@@ -177,7 +198,8 @@ const Workflow: React.FC = () => {
                     ...(data.type === "chatTrigger" ? {onOpenChat: handleOpenChat} : {}),
                     status: 'pending',
                     onDelete: handleDeleteNode,
-                    flowType: getFlowType(data.type)
+                    flowType: getFlowType(data.type),
+                    onRun: handleRunDocumentLoaderNode
                 },
                 position: {
                     x: data.properties.position_x,
@@ -203,7 +225,7 @@ const Workflow: React.FC = () => {
                     });
                 }
                 if (agent.type === 'chat') {
-                    const {memory_node, chat_model_node} = agent.data;
+                    const {memory_node, chat_model_node, tool_nodes} = agent.data;
                     if (memory_node) {
                         const chatEdge = {
                             id: uuidv4(),
@@ -225,6 +247,19 @@ const Workflow: React.FC = () => {
                             style: {stroke: '#f6ab6c', strokeDasharray: '5,5'},
                         };
                         setEdges((prevEdges) => [...prevEdges, chatEdge]);
+                    }
+                    if (tool_nodes) {
+                        tool_nodes.map((tool_node) => {
+                            const chatEdge = {
+                                id: uuidv4(),
+                                source: agent.id,
+                                sourceHandle: `tools-${agent.id}`,
+                                target: tool_node,
+                                animated: true,
+                                style: {stroke: '#f6ab6c', strokeDasharray: '5,5'},
+                            };
+                            setEdges((prevEdges) => [...prevEdges, chatEdge]);
+                        });
                     }
                 }
             });
@@ -287,7 +322,7 @@ const Workflow: React.FC = () => {
                     data.memory_node = targetAgent.id;
                 } else if (targetAgent.type === 'chatModel') {
                     data.chat_model_node = targetAgent.id;
-                } else if (targetAgent.type === 'toolNodes') {
+                } else if (targetAgent.data.flowType === 'tool') {
                     data.tool_nodes?.push(targetAgent.id);
                 } else {
                     data.next_agents?.push(targetAgent.id);
@@ -335,7 +370,9 @@ const Workflow: React.FC = () => {
                 },
                 onDelete: handleDeleteNode,
                 status: 'pending',
-                flowType: 'main'
+                flowType: 'trigger',
+                onRun: handleRunDocumentLoaderNode,
+                onFilesUpdate: handleUpdateFiles
             };
         } else if (agentType === 'chat') {
             newAgentData = {
@@ -385,6 +422,20 @@ const Workflow: React.FC = () => {
                 status: 'pending',
                 onDelete: handleDeleteNode,
                 flowType: 'sub'
+            }
+        } else if (agentType === 'vectorStore') {
+            newAgentData = {
+                slug: slug,
+                type: 'vectorStore',
+                workflow: id,
+                next_agents: [],
+                properties: {
+                    position_x: 0,
+                    position_y: 0,
+                },
+                status: 'pending',
+                onDelete: handleDeleteNode,
+                flowType: 'tool'
             }
         } else if (agentType === 'chatModel') {
             newAgentData = {
@@ -457,6 +508,28 @@ const Workflow: React.FC = () => {
         console.log('trigger id: ', triggerId);
         const res = await api.post(`/api/start-workflow/`, {node_id: id, trigger_id: triggerId, input: chatInput});
         console.log(res.data);
+    }
+
+    const handleRunDocumentLoaderNode = async (triggerId: string) => {
+        const res = await api.post(`/api/start-workflow/`, {node_id: id, trigger_id: triggerId, input: chatInput});
+        console.log(res.data);
+    }
+
+    const handleUpdateFiles = async (nodeId: string) => {
+        const node = agents.find((agent) => agent.id === nodeId) || null;
+        if (!node) {
+            return;
+        }
+        const res = await api.get(`/api/${nodeId}/files/`);
+        const files: FileType[] = res.data.map((file: FileResponse) => ({
+            id: file.id,
+            extension: file.file.split('.').pop(),
+            name: file.file.replace(/^.*[\\/]/, ''),
+            date: file.date
+        }));
+        const prop = node.data.properties as DocumentLoaderProperties;
+        prop.files.push(...files);
+        node.data.properties.files = prop.files;
     }
 
     return (

@@ -1,14 +1,15 @@
 import React, {useState, ChangeEvent} from "react";
 import {createPortal} from "react-dom";
-import {AgentData} from "../nodeTypes";
+import {AgentData, DocumentLoaderBase, FileType} from "../nodeTypes";
+import FileUpload from "./FileUpload";
+import api from "../api.ts"; // import your file upload component
 
 // ---------------------
 // Form configuration types
 // ---------------------
-
 export interface FieldConfig {
     label?: string;
-    inputType: "text" | "number" | "checkbox" | "select";
+    inputType: "text" | "number" | "checkbox" | "select" | "file";
     options?: string[]; // For select inputs
 }
 
@@ -19,7 +20,6 @@ export interface FormConfig {
 // ---------------------
 // Default configuration lookup
 // ---------------------
-
 const getDefaultFormConfig = (nodeType: string): FormConfig | null => {
     switch (nodeType) {
         case "chat":
@@ -35,7 +35,7 @@ const getDefaultFormConfig = (nodeType: string): FormConfig | null => {
             };
         case "documentLoader":
             return {
-                filePath: {label: "File Path", inputType: "text"},
+                filePath: {label: "File Path", inputType: "file"},
                 // Additional documentLoader fields...
             };
         case "memory":
@@ -56,7 +56,6 @@ const getDefaultFormConfig = (nodeType: string): FormConfig | null => {
 // ---------------------
 // BaseModal Props and Component
 // ---------------------
-
 interface BaseModalProps<T extends AgentData> {
     id: string;
     isOpen: boolean;
@@ -108,6 +107,20 @@ const BaseModal = <T extends AgentData>({
                 {Object.keys(formConfig).map((fieldKey) => {
                     const config = formConfig[fieldKey];
                     const value = formData[fieldKey];
+                    if (config.inputType === "file") {
+                        // Render the file upload component for filePath field.
+                        return (
+                            <div key={fieldKey} className="mb-4">
+                                <label className="block font-bold mb-1">
+                                    {config.label || fieldKey}
+                                </label>
+                                <FileUpload
+                                    id={id}
+                                    onFilesUpdate={(data as DocumentLoaderBase).onFilesUpdate}
+                                />
+                            </div>
+                        );
+                    }
                     return (
                         <div key={fieldKey} className="mb-4">
                             <label className="block font-bold mb-1">
@@ -167,7 +180,7 @@ const BaseModal = <T extends AgentData>({
                     {/* Input Column */}
                     <div className="border p-4">
                         <h3 className="font-semibold mb-2">Input</h3>
-                        {/* Replace the following placeholder with actual input info */}
+                        {/* Replace with actual input info */}
                         <p>Incoming data settings...</p>
                     </div>
                     {/* Form Column */}
@@ -175,8 +188,41 @@ const BaseModal = <T extends AgentData>({
                     {/* Output Column */}
                     <div className="border p-4">
                         <h3 className="font-semibold mb-2">Output</h3>
-                        {/* Replace the following placeholder with actual output info */}
-                        <p>Outgoing data settings...</p>
+                        {
+                            data.type === 'documentLoader' ? (
+                                <table className="w-full text-sm text-left rtl:text-right">
+                                    <thead className="text-xs uppercase bg-gray-50">
+                                    <tr>
+                                        <th scope="col" className="px-6 py-3">
+                                            File name
+                                        </th>
+                                        <th scope="col" className="px-6 py-3">
+                                            Type
+                                        </th>
+                                        <th scope="col" className="px-6 py-3">
+                                            Date Added
+                                        </th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    {data.properties.files?.map((file) => (
+                                        <tr key={file.id} className="bg-white border-b border-gray-200">
+                                            <th
+                                                scope="row"
+                                                className="px-6 py-4 font-medium whitespace-nowrap"
+                                            >
+                                                {file.name}
+                                            </th>
+                                            <td className="px-6 py-4">{file.extension}</td>
+                                            <td className="px-6 py-4">{file.date}</td>
+                                        </tr>
+                                    ))}
+                                    </tbody>
+                                </table>
+                            ) : (
+                                <div>Output data</div>
+                            )
+                        }
                     </div>
                 </div>
             );
@@ -189,13 +235,46 @@ const BaseModal = <T extends AgentData>({
                     {/* Output Column */}
                     <div className="border p-4">
                         <h3 className="font-semibold mb-2">Output</h3>
-                        {/* Replace the following placeholder with actual output info */}
-                        <p>Outgoing data settings...</p>
+                        {
+                            data.type === 'documentLoader' ? (
+                                <table className="w-full text-sm text-left rtl:text-right">
+                                    <thead className="text-xs uppercase bg-gray-50">
+                                    <tr>
+                                        <th scope="col" className="px-6 py-3">
+                                            File name
+                                        </th>
+                                        <th scope="col" className="px-6 py-3">
+                                            Type
+                                        </th>
+                                        <th scope="col" className="px-6 py-3">
+                                            Date Added
+                                        </th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    {data.properties.files?.map((file) => (
+                                        <tr key={file.id} className="bg-white border-b border-gray-200">
+                                            <th
+                                                scope="row"
+                                                className="px-6 py-4 font-medium whitespace-nowrap"
+                                            >
+                                                {file.name}
+                                            </th>
+                                            <td className="px-6 py-4">{file.extension}</td>
+                                            <td className="px-6 py-4">{file.date}</td>
+                                        </tr>
+                                    ))}
+                                    </tbody>
+                                </table>
+                            ) : (
+                                <div>Output data</div>
+                            )
+                        }
                     </div>
                 </div>
             );
         } else {
-            // Default: just render the form
+            // Default: single-column layout with the form.
             return <div className="border p-4">{renderForm()}</div>;
         }
     };
