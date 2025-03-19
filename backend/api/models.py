@@ -24,40 +24,48 @@ class Agent(models.Model):
         ('chatTrigger', 'Chat Trigger'),
         ('memory', 'Memory'),
         ('chatModel', 'Chat Model'),
-        ('vectorStore', 'Vector Store')
+        ('vectorStore', 'Vector Store'),
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     slug = models.UUIDField()
     type = models.CharField(max_length=256, blank=True, choices=TYPE_CHOICES)
     properties = models.JSONField(default=dict)
     workflow = models.ForeignKey('Workflow', on_delete=models.CASCADE, blank=True, null=True)
-    next_agents = models.ManyToManyField(
-        "self",
-        blank=True,
-        related_name='prev_agents',
-        symmetrical=False
-    )
-    memory_node = models.OneToOneField(
-        "self",
-        blank=True,
-        null=True,
-        related_name='head_memory_agent',
-        on_delete=models.SET_NULL
-    )
-    chat_model_node = models.OneToOneField(
-        "self",
-        blank=True,
-        null=True,
-        related_name='head_chat_model_node',
-        on_delete=models.SET_NULL
-    )
-    retriever_node = models.ForeignKey(
-        "self",
-        blank=True,
-        null=True,
-        related_name='retriever_agents',
-        on_delete=models.SET_NULL
-    )
+
+class NodeConnection(models.Model):
+    CONNECTION_CHOICES = [
+        ('next', 'Next Agents'),
+        ('memory', 'Memory Node'),
+        ('chat_model', 'Chat Model Node'),
+        ('retriever', 'Retriever Node'),
+    ]
+    id = models.AutoField(primary_key=True)
+    source = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="connections_out")
+    target = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="connections_in")
+    connection_type = models.CharField(max_length=50, choices=CONNECTION_CHOICES)
+
+    class Meta:
+        # Example: enforce that for connection types that should be one-to-one (like retriever)
+        # only one connection of that type exists per source node.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['source', 'connection_type'],
+                condition=models.Q(connection_type='retriever'),
+                name='unique_retriever_per_source'
+            ),
+            models.UniqueConstraint(
+                fields=['source', 'connection_type'],
+                condition=models.Q(connection_type='chat_model'),
+                name='unique_chat_model_per_source'
+            ),
+            models.UniqueConstraint(
+                fields=['source', 'connection_type'],
+                condition=models.Q(connection_type='memory'),
+                name='unique_memory_per_source'
+            )
+            # Add similar constraints for other one-to-one relationships if needed.
+        ]
+
 
 
 class File(models.Model):

@@ -1,6 +1,6 @@
 from django.urls import path
 from .views import FileUploadView, WorkflowListView, WorkflowCreateView, WorkflowAgentsListView, FileListView, \
-    AgentCreateView, MemoryCreateView, WorkflowChatMemoriesListView, WorkflowStartView, AgentDeleteView
+    AgentCreateView, MemoryCreateView, WorkflowChatMemoriesListView, WorkflowStartView, AgentDeleteView, AgentConnectionCreateView
 
 urlpatterns = [
     path('<slug:slug>/files/upload/', FileUploadView.as_view(), name='upload_files'),
@@ -9,6 +9,7 @@ urlpatterns = [
     path('workflows/', WorkflowListView.as_view(), name='workflows'),
     path('workflow/<str:id>/agents/', WorkflowAgentsListView.as_view(), name='workflow_agents'),
     path('agent/create/', AgentCreateView.as_view(), name='agent_create'),
+    path('connection/create/', AgentConnectionCreateView.as_view(), name='create_connection'),
     path('agent/<slug:slug>/delete/', AgentDeleteView.as_view(), name='agent_delete'),
     path('memory/create/', MemoryCreateView.as_view(), name='create_memory'),
     path('start-workflow/', WorkflowStartView.as_view(), name='start_workflow'),

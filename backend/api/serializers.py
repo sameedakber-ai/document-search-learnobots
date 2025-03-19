@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from .models import Document, File, Agent, Workflow, Memory
+from .models import Document, File, Agent, Workflow, Memory, NodeConnection
 from rest_framework import serializers
 
 class UserSerializer(serializers.ModelSerializer):
@@ -36,50 +36,67 @@ class WorkflowSerializer(serializers.ModelSerializer):
         workflow = Workflow.objects.create(**validated_data, owner=user)
         return workflow
 
-class AgentSerializer(serializers.ModelSerializer):
-    next_agents = serializers.SlugRelatedField(
-        slug_field='slug',
+class NodeConnectionSerializer(serializers.ModelSerializer):
+    source = serializers.SlugRelatedField(
+        slug_field="slug",
         queryset=Agent.objects.all(),
-        many=True,
-        required=False
+        required=True,
+        allow_null=False
     )
-
-    retriever_node = serializers.SlugRelatedField(
-        slug_field='slug',
+    target = serializers.SlugRelatedField(
+        slug_field="slug",
         queryset=Agent.objects.all(),
-        required=False,
-        allow_null=True
+        required=True,
+        allow_null=False
     )
+    # We keep all fields here for standalone use.
+    class Meta:
+        model = NodeConnection
+        fields = ['id', 'source', 'target', 'connection_type']
 
-    memory_node = serializers.SlugRelatedField(
-        slug_field='slug',
-        queryset=Agent.objects.all(),
-        required=False,
-        allow_null=True
-    )
+    def create(self, validated_data):
+        source = validated_data.get('source')
+        connection_type = validated_data.get('connection_type')
+        
+        # For one-to-one connection types, check if one already exists for this source.
+        if connection_type in ['retriever', 'chat_model', 'memory']:
+            if NodeConnection.objects.filter(source=source, connection_type=connection_type).exists():
+                raise serializers.ValidationError(
+                    f"A '{connection_type}' connection for this source already exists."
+                )
+        
+        # Create and return the new NodeConnection
+        return NodeConnection.objects.create(**validated_data)
 
-    chat_model_node = serializers.SlugRelatedField(
+
+class NodeConnectionNestedSerializer(serializers.ModelSerializer):
+    target = serializers.SlugRelatedField(
         slug_field='slug',
-        queryset=Agent.objects.all(),
-        required=False,
-        allow_null=True
+        read_only=True
     )
 
     class Meta:
+        model = NodeConnection
+        fields = ['target', 'connection_type']
+
+
+class AgentSerializer(serializers.ModelSerializer):
+    # Use the nested serializer to return only target and connection_type.
+    connections_out = NodeConnectionNestedSerializer(many=True, read_only=True)
+
+    class Meta:
         model = Agent
-        fields = ('id', 'slug', 'type', 'properties', 'workflow', 'next_agents', 'retriever_node', 'memory_node', 'chat_model_node')
+        fields = ('id', 'slug', 'type', 'properties', 'workflow', 'connections_out')
 
     def create(self, validated_data):
-        print(validated_data)
-        next_agents = validated_data.pop('next_agents', [])
         slug = validated_data.get('slug')
         validated_data.pop('id', None)
         agent, created = Agent.objects.update_or_create(
             slug=slug,
             defaults=validated_data
         )
-        agent.next_agents.set(next_agents)
         return agent
+
 
 
 class DocumentSerializer(serializers.ModelSerializer):

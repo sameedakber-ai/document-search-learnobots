@@ -12,7 +12,7 @@ from rest_framework.views import APIView
 from rest_framework import status
 
 from .serializers import UserSerializer, DocumentSerializer, FileSerializer, WorkflowSerializer, \
-    AgentSerializer, MemorySerializer
+    AgentSerializer, MemorySerializer, NodeConnectionSerializer
 from .services import DocumentProcessService, ChatService
 from .tasks import process_workflow
 
@@ -78,7 +78,6 @@ class AgentCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        print(request.data)
         serializer = AgentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -86,6 +85,21 @@ class AgentCreateView(APIView):
 
         serializer = AgentSerializer(agent)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+class AgentConnectionCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = NodeConnectionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        connection = serializer.save()
+
+        serializer = NodeConnectionSerializer(connection)
+        print(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
 
 class AgentDeleteView(APIView):
     permission_classes = [IsAuthenticated]
@@ -104,6 +118,7 @@ class WorkflowAgentsListView(APIView):
         agents = Agent.objects.filter(workflow=workflow)
 
         serializer = AgentSerializer(agents, many=True)
+        print(serializer.data);
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 class WorkflowChatMemoriesListView(APIView):
