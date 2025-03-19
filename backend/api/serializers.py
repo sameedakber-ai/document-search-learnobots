@@ -100,15 +100,21 @@ class AgentSerializer(serializers.ModelSerializer):
 
 
 class DocumentSerializer(serializers.ModelSerializer):
+    agent = serializers.SlugRelatedField(
+        slug_field="slug",
+        queryset=Agent.objects.all(),
+        required=True,
+    )
     class Meta:
         model = Document
-        fields = ('id', 'file', 'name', 'date', 'owner', 'loaded')
-        extra_kwargs = {'owner': {'read_only': True}, 'name': {'read_only': True}, 'date': {'read_only': True}}
+        fields = ('id', 'uid', 'text', 'name', 'date', 'agent', 'embedding')
 
     def create(self, validated_data):
-        user = self.context['request'].user
-        file = validated_data.pop('file', None)
-        document = Document.objects.create(file=file, name=file.name, owner=user)
+        document, created = Document.objects.get_or_create(
+            uid=validated_data.get("uid"),
+            name=validated_data.get("name"),
+            defaults=validated_data
+        )
         return document
 
 class MemorySerializer(serializers.ModelSerializer):

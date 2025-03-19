@@ -10,8 +10,12 @@ import time
 from openai import OpenAI
 from pydantic import BaseModel
 
-from .models import Agent, Workflow
-from .helpers import DocumentLoader, KnowledgeGenerator
+from .models import Agent, Workflow, Document
+from .helpers import DocumentLoader, KnowledgeGenerator, get_similar_documents
+
+from django.db.models import F, Value, FloatField
+from django.db.models import Func
+from pgvector.django import CosineDistance
 
 
 class ChatTriggerEvent(BaseModel):
@@ -89,6 +93,72 @@ class ElementList(BaseModel):
 
 logger = logging.getLogger(__name__)
 
+def get_similar_documents(query_embedding, threshold=0.70):
+    """
+    Returns all Document objects whose cosine similarity with the given query_embedding
+    is above the threshold.
+
+    Cosine similarity is computed as:
+         similarity = 1 - (embedding <#> query_embedding)
+    Hence, we filter where:
+         1 - (embedding <#> query_embedding) > threshold
+         or equivalently,
+         (embedding <#> query_embedding) < (1 - threshold)
+    """
+    qs = Document.objects.annotate(
+        cosine_distance=CosineDistance('embedding', query_embedding)
+        ).filter(
+        cosine_distance__lt=(1-threshold)
+        ).order_by('cosine_distance')
+    return qs
+
+
+def knowledge_base_search_tool(query: str) -> str:
+    """
+    Given a query string, this tool generates an embedding for the query,
+    retrieves similar documents using your get_similar_documents function,
+    and returns a concatenated string of the document texts.
+    """
+    embedding_response = client.embeddings.create(
+        input=query,
+        model="text-embedding-ada-002"
+    )
+    query_embedding = embedding_response.data[0].embedding
+
+    # Retrieve documents similar to the query.
+    similar_docs = get_similar_documents(query_embedding)
+
+    print(f"\n\n\n{similar_docs}\n\n\n")
+
+    # Combine the text content from the similar documents.
+    context = "\n\n".join([doc.text for doc in similar_docs if doc.text])
+
+    return context
+
+# 2. Define the tool schema (without including the function object) following OpenAI's spec.
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "knowledge_base_search",
+            "description": "Searches the internal knowledge base for context based on a query.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The query string to search for relevant context."
+                    }
+                },
+                "required": ["query"],
+                "additionalProperties": False
+            },
+            "strict": True
+        }
+    }
+]
+
+
 
 def send_update(
         channel_layer: Any,
@@ -159,8 +229,19 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
                 agent_input = ElementList(output=agent_input.output)
             elif current_agent.type == 'vectorStore':
                 for element in agent_input.output:
-                    print(element.text)
-                    print("\n")
+                    embedding = client.embeddings.create(
+                        input=element.text,
+                        model='text-embedding-ada-002'
+                    )
+                    print(f"\n\n{embedding.data[0].embedding}\n\n")
+                    document = Document.objects.create(
+                        uid=element.metadata["uid"],
+                        text=element.text,
+                        agent=current_agent,  # Or use agent_id=current_agent.id if you prefer
+                        name=element.metadata["source"],
+                        embedding=embedding.data[0].embedding
+                    )
+
             elif current_agent.type == 'chatTrigger':
                 # Update memories for a chatTrigger.
                 agent_input = ChatTriggerEvent(output=agent_input.output)
@@ -229,6 +310,62 @@ def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str)
                     }]
                 })
                 original_user_message = agent_input.output
+
+                retriever_conn = current_agent.connections_out.filter(connection_type='retriever').first()
+
+                if retriever_conn:
+                    retriever_node = retriever_conn.target
+                    send_update(channel_layer, group_name, str(retriever_node.slug), 'running',
+                                f"{retriever_node.type} in progress...")
+                    documents = retriever_node.documents.all()
+                    if documents:
+                        # Optionally, create a history from previous messages if needed.
+                        history = "\n\n".join([
+                            f'role: {message["role"]}\nmessage: {message["content"][0]["text"]}'
+                            for message in messages
+                        ])
+
+                        # 4. Call the model with your messages and tool definitions.
+                        response = client.chat.completions.create(
+                            model="gpt-4o-mini",
+                            messages=messages,
+                            tools=tools,
+                        )
+
+                        # Check if the model requested a function call.
+                        tool_calls = response.choices[0].message.tool_calls
+                        if tool_calls:
+                            tool_call = tool_calls[0]
+                            # Parse the arguments provided by the model.
+                            args = json.loads(tool_call.function.arguments)
+                            print(f"\n\n\n{args}\n\n\n")
+                            # Check that the function call name matches our tool.
+                            if tool_call.function.name == "knowledge_base_search":
+                                # 5. Execute the tool function.
+                                tool_result = knowledge_base_search_tool(**args)
+                                # 6. Append the function call and its result to the messages.
+                                messages.append(response.choices[0].message)  # The function call message.
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": tool_result
+                                })
+                                # 7. Supply the function result back to the model.
+                                response_2 = client.chat.completions.create(
+                                    model="gpt-4o-mini",
+                                    messages=messages,
+                                    tools=tools,
+                                )
+                                final_content = response_2.choices[0].message.content.strip()
+                                print(final_content)
+                            else:
+                                print("Received an unknown function call:", tool_call["function"]["name"])
+                        else:
+                            # If no function call was requested, simply print the response content.
+                            print(response.choices[0].message.content.strip())
+
+                    send_update(channel_layer, group_name, str(retriever_node.slug), 'completed',
+                            f"{retriever_node.type} completed.")
 
                 try:
                     response = client.beta.chat.completions.parse(

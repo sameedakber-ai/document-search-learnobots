@@ -5,7 +5,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Optional, List, Dict
-from .models import Document as DocumentFile
+from .models import Document
 
 import numpy as np
 from django.conf.global_settings import MEDIA_ROOT
@@ -37,6 +37,33 @@ OPENAI_CHAT_COMPLETION_MODEL = 'gpt-4o'
 OPENAI_IMAGE_DESCRIPTION_MODEL = 'gpt-4o-mini'
 OPENAI_EMBEDDING_MODEL = 'text-embedding-ada-002'
 client = OpenAI(api_key=OPENAI_API_KEY)
+
+
+from django.db.models import F, Value, FloatField
+from django.db.models import Func
+
+def get_similar_documents(query_embedding, threshold=0.70):
+    """
+    Returns all Document objects whose cosine similarity with the given query_embedding
+    is above the threshold.
+
+    Cosine similarity is computed as:
+         similarity = 1 - (embedding <#> query_embedding)
+    Hence, we filter where:
+         1 - (embedding <#> query_embedding) > threshold
+         or equivalently,
+         (embedding <#> query_embedding) < (1 - threshold)
+    """
+    qs = Document.objects.annotate(
+        cosine_distance=Func(
+            F('embedding'),
+            Value(query_embedding),
+            function='<#>',
+            output_field=FloatField()
+        )
+    ).filter(cosine_distance__lt=(1 - threshold))
+    return qs
+
 
 
 class Element(BaseModel):

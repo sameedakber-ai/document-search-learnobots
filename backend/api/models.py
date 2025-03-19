@@ -86,11 +86,19 @@ class File(models.Model):
 
 
 class Document(models.Model):
+    id = models.AutoField(primary_key=True)
+    uid = models.CharField(max_length=256, null=True)
     text = models.TextField(blank=True, null=True)
     name = models.CharField(max_length=256, blank=True)
     date = models.DateTimeField(auto_now_add=True)
     embedding = VectorField(dimensions=1536)
-    file = models.ForeignKey(File, on_delete=models.CASCADE, blank=True, null=True, related_name='documents')
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, null=True, blank=True, related_name='documents')
+    # file = models.ForeignKey(File, on_delete=models.CASCADE, blank=True, null=True, related_name='documents')
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['uid', 'name'], name='unique_uid_name')
+        ]
 
 
 class Entity(models.Model):
