@@ -225,7 +225,8 @@ const Workflow: React.FC = () => {
                     });
                 }
                 if (agent.type === 'chat') {
-                    const {memory_node, chat_model_node, tool_nodes} = agent.data;
+                    console.log(agent.data);
+                    const {memory_node, chat_model_node, retriever_node} = agent.data;
                     if (memory_node) {
                         const chatEdge = {
                             id: uuidv4(),
@@ -248,18 +249,18 @@ const Workflow: React.FC = () => {
                         };
                         setEdges((prevEdges) => [...prevEdges, chatEdge]);
                     }
-                    if (tool_nodes) {
-                        tool_nodes.map((tool_node) => {
-                            const chatEdge = {
-                                id: uuidv4(),
-                                source: agent.id,
-                                sourceHandle: `tools-${agent.id}`,
-                                target: tool_node,
-                                animated: true,
-                                style: {stroke: '#f6ab6c', strokeDasharray: '5,5'},
-                            };
-                            setEdges((prevEdges) => [...prevEdges, chatEdge]);
-                        });
+                    if (retriever_node) {
+                        console.log('fjfkjdsnfds');
+                        const chatEdge = {
+                            id: uuidv4(),
+                            source: agent.id,
+                            sourceHandle: `retriever-${agent.id}`,
+                            target: retriever_node,
+                            targetHandle: `retriever-${retriever_node}`,
+                            animated: true,
+                            style: {stroke: '#f6ab6c', strokeDasharray: '5,5'},
+                        };
+                        setEdges((prevEdges) => [...prevEdges, chatEdge]);
                     }
                 }
             });
@@ -322,11 +323,13 @@ const Workflow: React.FC = () => {
                     data.memory_node = targetAgent.id;
                 } else if (targetAgent.type === 'chatModel') {
                     data.chat_model_node = targetAgent.id;
-                } else if (targetAgent.data.flowType === 'tool') {
-                    data.tool_nodes?.push(targetAgent.id);
+                } else if (targetAgent.type === 'vectorStore') {
+                    data.retriever_node = targetAgent.id;
                 } else {
                     data.next_agents?.push(targetAgent.id);
                 }
+
+                console.log("node: ", data.retriever_node);
                 const res = await api.post('/api/agent/create/', {
                     ...data
                 });

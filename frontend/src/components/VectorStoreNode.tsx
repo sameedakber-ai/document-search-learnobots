@@ -14,9 +14,12 @@ const VectorStoreNode: FC<ChatAgentNodeProps> = (props) => {
                 <Handle
                     type="target"
                     position={Position.Top}
-                    id={`tools-${id}`}
-                    style={{left: "20%"}}
+                    id={`retriever-${id}`}
+                    style={{left: "50%"}}
                 />
+                <span className="absolute text-xs" style={{left: "40%", top: 0}}>
+          Retriever
+        </span>
             </BaseNode>
         </>
     )

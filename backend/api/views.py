@@ -78,6 +78,7 @@ class AgentCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
+        print(request.data)
         serializer = AgentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 

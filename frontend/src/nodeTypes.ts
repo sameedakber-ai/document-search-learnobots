@@ -16,7 +16,7 @@ export interface AgentBase {
     next_agents?: string[];
     memory_node?: string;
     chat_model_node?: string;
-    tool_nodes?: string[];
+    retriever_node?: string;
     status: string;
     onDelete: (id: string) => void;
     flowType: string;

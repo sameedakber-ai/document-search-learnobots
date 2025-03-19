@@ -44,11 +44,11 @@ class AgentSerializer(serializers.ModelSerializer):
         required=False
     )
 
-    tool_nodes = serializers.SlugRelatedField(
+    retriever_node = serializers.SlugRelatedField(
         slug_field='slug',
         queryset=Agent.objects.all(),
-        many=True,
-        required=False
+        required=False,
+        allow_null=True
     )
 
     memory_node = serializers.SlugRelatedField(
@@ -67,12 +67,11 @@ class AgentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Agent
-        fields = ('id', 'slug', 'type', 'properties', 'workflow', 'next_agents', 'tool_nodes', 'memory_node', 'chat_model_node')
+        fields = ('id', 'slug', 'type', 'properties', 'workflow', 'next_agents', 'retriever_node', 'memory_node', 'chat_model_node')
 
     def create(self, validated_data):
         print(validated_data)
         next_agents = validated_data.pop('next_agents', [])
-        tool_nodes = validated_data.pop('tool_nodes', [])
         slug = validated_data.get('slug')
         validated_data.pop('id', None)
         agent, created = Agent.objects.update_or_create(
@@ -80,7 +79,6 @@ class AgentSerializer(serializers.ModelSerializer):
             defaults=validated_data
         )
         agent.next_agents.set(next_agents)
-        agent.tool_nodes.set(tool_nodes)
         return agent
 
 

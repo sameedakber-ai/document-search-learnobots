@@ -33,11 +33,11 @@ const ChatAgent: FC<ChatAgentNodeProps> = (props) => {
                 <Handle
                     type="source"
                     position={Position.Bottom}
-                    id={`tools-${id}`}
+                    id={`retriever-${id}`}
                     style={{left: "50%"}}
                 />
-                <span className="absolute text-xs" style={{left: "44%", bottom: 0}}>
-          Tools
+                <span className="absolute text-xs" style={{left: "39%", bottom: 0}}>
+          Retriever
         </span>
             </BaseNode>
         </>

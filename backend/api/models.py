@@ -51,11 +51,12 @@ class Agent(models.Model):
         related_name='head_chat_model_node',
         on_delete=models.SET_NULL
     )
-    tool_nodes = models.ManyToManyField(
+    retriever_node = models.ForeignKey(
         "self",
         blank=True,
-        related_name='head_tool_agents',
-        symmetrical=False
+        null=True,
+        related_name='retriever_agents',
+        on_delete=models.SET_NULL
     )
 
 
