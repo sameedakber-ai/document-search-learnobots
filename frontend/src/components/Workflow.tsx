@@ -135,6 +135,7 @@ const Workflow: React.FC = () => {
 	const [memories, setMemories] = useState<MemoryItem[]>([]);
 	const [chatInput, setChatInput] = useState<string>('');
 	const [messages, setMessages] = useState<string[]>([]);
+	const [warnings, setWarnings] = useState<string[]>([]);
 
 	const filteredList = useFuzzySearchList({
 		list: nodeLabels,
@@ -182,6 +183,29 @@ const Workflow: React.FC = () => {
 			setMessages(prevMessages => [...prevMessages, data.message]);
 			console.log(data.message);
 
+			if (data.node_id === -1) {
+				setAgents(prevAgents =>
+					prevAgents.map(agent => {
+						if (agent.data.status === 'running') {
+							return { ...agent, data: { ...agent.data, status: 'failed' } };
+						} else if (agent.data.status === 'completed') {
+							return agent;
+						} else {
+							return { ...agent };
+						}
+					})
+					);
+
+				return;
+			}
+
+			else if (data.node_id === 1) {
+				setWarnings((prev) => [...prev, data.message]);
+				console.log(data.message);
+				return;
+			}
+
+
 			setAgents(prevAgents =>
 				prevAgents.map(agent =>
 					agent.id === data.node_id
@@ -205,10 +229,17 @@ const Workflow: React.FC = () => {
 		};
 	}, [id, setAgents]); // Removed `messages` from dependency array
 
-	const handleRunDocumentLoaderNode = async (triggerId: string) => {
-		const res = await api.post(`/api/start-workflow/`, {node_id: id, trigger_id: triggerId, input: chatInput});
-		console.log(res.data);
-	}
+	const handleRunDocumentLoaderNode = useCallback(
+		async (triggerId: string) => {
+			const res = await api.post(`/api/start-workflow/`, {
+				node_id: id,
+				trigger_id: triggerId,
+				input: chatInput,
+			});
+			console.log(res.data);
+		},
+  [id] // dependencies that affect this function
+  );
 
 
 	const getAgents = useCallback(async (): Promise<void> => {
@@ -326,6 +357,7 @@ const Workflow: React.FC = () => {
 		setAgents,
 		setEdges,
 		getFlowType,
+		handleRunDocumentLoaderNode
 		]);
 
 
@@ -555,7 +587,6 @@ const Workflow: React.FC = () => {
 			position: {x: 0, y: 0},
 		};
 
-		// Update the nodes state (append new node)
 		setAgents((prevAgents) => [...prevAgents, newNode]);
 
 		const res = await api.post(`/api/agent/create/`, newAgentData);
@@ -580,21 +611,8 @@ const Workflow: React.FC = () => {
 			return;
 		}
 
-		// TypeScript now knows node.data.properties is ChatTriggerProperties.
-		node.data.properties.memories?.push(newMemory);
+		// node.data.properties.memories?.push(newMemory);
 		setMemories((prevMemories) => [...prevMemories, newMemory]);
-		// const newAgentData = {
-		//     slug: activeNode?.id,
-		//     type: 'chatTrigger',
-		//     workflow: id,
-		//     next_agents: [],
-		//     onOpenChat: handleOpenChat,
-		//     properties: {
-		//         position_x: 0,
-		//         position_y: 0,
-		//         memories: memories
-		//     },
-		// };
 		const triggerId = activeNode?.id;
 		console.log('trigger id: ', triggerId);
 		const res = await api.post(`/api/start-workflow/`, {node_id: id, trigger_id: triggerId, input: chatInput});

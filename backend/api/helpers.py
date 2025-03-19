@@ -55,13 +55,10 @@ def get_similar_documents(query_embedding, threshold=0.70):
          (embedding <#> query_embedding) < (1 - threshold)
     """
     qs = Document.objects.annotate(
-        cosine_distance=Func(
-            F('embedding'),
-            Value(query_embedding),
-            function='<#>',
-            output_field=FloatField()
-        )
-    ).filter(cosine_distance__lt=(1 - threshold))
+        cosine_distance=CosineDistance('embedding', query_embedding)
+        ).filter(
+        cosine_distance__lt=(1-threshold)
+        ).order_by('cosine_distance')
     return qs
 
 
