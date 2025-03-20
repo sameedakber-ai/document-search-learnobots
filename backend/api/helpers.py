@@ -479,7 +479,7 @@ class DocumentLoader:
     def load_text(self, file_path):
         try:
             document = TextLoader(file_path, encoding="UTF-8").load()[0].page_content
-        except RuntimeError or UnicodeDecodeError or FileNotFoundError:
+        except RuntimeError or UnicodeDecodeError or FileNotFoundError or ValueError:
             return []
 
         text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
@@ -499,8 +499,10 @@ class DocumentLoader:
 
     def load_pdf(self, file_path, include_images=False):
         try:
+            pages = []
+            loader = PyPDFLoader(file_path)
             documents = [document.page_content for document in PyPDFLoader(file_path).load()]
-        except RuntimeError or UnicodeDecodeError or FileNotFoundError:
+        except RuntimeError or UnicodeDecodeError or FileNotFoundError or ValueError:
             return []
 
         return [

@@ -7,12 +7,11 @@ from celery import shared_task
 from channels.layers import get_channel_layer
 import time
 
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from pydantic import BaseModel
 import openai
 
 from .models import Agent, Workflow, Document
-from .helpers import DocumentLoader, KnowledgeGenerator, get_similar_documents
 
 from django.db.models import F, Value, FloatField
 from django.db.models import Func
@@ -33,6 +32,10 @@ import os
 import shutil
 import tempfile
 
+from langchain_community.document_loaders import TextLoader, PyPDFLoader
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
+
+logger = logging.getLogger(__name__)
 
 class ChatTriggerEvent(BaseModel):
     output: str
@@ -64,7 +67,6 @@ class ElementList(BaseModel):
     output: List[Element]
 
 
-logger = logging.getLogger(__name__)
 
 def get_similar_documents(query_embedding, threshold=0.70):
     """
@@ -99,7 +101,7 @@ def knowledge_base_search_tool(query: str) -> str:
     query_embedding = embedding_response.data[0].embedding
 
     # Retrieve documents similar to the query.
-    similar_docs = get_similar_documents(query_embedding)
+    similar_docs = get_similar_documents(query_embedding)[:5]
 
     # Combine the text content from the similar documents.
     context = "\n\n".join([doc.text for doc in similar_docs if doc.text])
@@ -130,313 +132,134 @@ tools = [
 ]
 
 
+class DocumentLoader:
 
-def send_update(
-        channel_layer: Any,
-        group_name: str,
-        node_id: Optional[str],
-        status: str,
-        message: str
-) -> None:
-    """Helper to send a workflow update via the channel layer."""
-    payload: Dict[str, Union[str, None]] = {
-        'type': 'workflow.update',
-        'status': status,
-        'message': message,
-    }
-    if node_id:
-        payload['node_id'] = node_id
-    async_to_sync(channel_layer.group_send)(group_name, payload)
+    def __init__(self, document):
+        self.file_path = f'media/{document.file}'
 
+    @property
+    def get_ext(self):
+        return os.path.splitext(self.file_path)[1].lstrip('.').lower()
 
+    def load(self):
+        path = self.file_path
+        ext = self.get_ext
 
-# @shared_task(bind=True)
-# def process_workflow(self: Task, node_id: str, trigger_id: str, input_text: str) -> List[str]:
-#     """
-#     Process the workflow by traversing agents starting at the trigger node.
-#     Returns a list of final outputs.
-#     """
-#     channel_layer = get_channel_layer()
-#     group_name = f'workflow_{node_id}'
+        loaded_documents = []
 
-#     # Notify that the workflow is starting.
-#     send_update(channel_layer, group_name, None, 'info', "Workflow starting ...")
+        if ext == 'md':
+            loaded_documents = self.load_markdown(path)
+        elif ext == 'txt':
+            loaded_documents = self.load_text(path)
+        elif ext == 'pdf':
+            loaded_documents = self.load_pdf(path)
 
-#     workflow = Workflow.objects.get(pk=node_id)
-#     trigger_node = Agent.objects.get(slug=trigger_id)
-#     send_update(channel_layer, group_name, str(trigger_node.slug), 'running',
-#                 f"{trigger_node.type} in progress...")
+        return loaded_documents
 
-#     # Prepare the initial input based on trigger node type.
-#     if trigger_node.type == 'chatTrigger':
-#         initial_input: ChatTriggerEvent = ChatTriggerEvent(output=input_text)
-#     elif trigger_node.type == 'documentLoader':
-#         texts = []
-#         for file in trigger_node.files.all():
-#             texts.extend(DocumentLoader(file).load())
-#             file_path = file.file
-#             try:
-#                 file.delete()
-#                 os.remove(f'media/{file_path}')
-#             except Exception as e:
-#                 print("Cannot remove file: ", e)
-#         initial_input: ElementList = ElementList(
-#             output=[element.model_dump() for element in texts]
-#         )
-#     else:
-#         initial_input = ChatTriggerEvent(output=input_text)  # fallback
+    def load_markdown(self, file_path):
+        def replace_title(match):
+            return f"# {match.group(1)}\n"
 
-#     send_update(channel_layer, group_name, str(trigger_node.slug), 'completed',
-#                 f"{trigger_node.type} completed.")
+        def get_split_headers(split):
+            section = ""
+            for header in ['Header 1', 'Header 2', 'Header 3', 'Header 4']:
+                section += f'{split.metadata[header]}:' if header in split.metadata else ''
+            if section:
+                if section[-1] == ':':
+                    section = section[:-1]
+            return section
 
-#     def process_node(current_agent: Agent,
-#                      agent_input: Union[ChatTriggerEvent, ChatEvent],
-#                      visited: Set[Any]) -> List[str]:
-#         """Recursively process an agent and its successors."""
-#         send_update(channel_layer, group_name, str(current_agent.slug), 'running',
-#                     f"{current_agent.type} in progress...")
-#         try:
-#             # Handle processing based on the agent type.
-#             if current_agent.type == 'documentLoader':
-#                 agent_input = ElementList(output=agent_input.output)
-#             elif current_agent.type == 'vectorStore':
-#                 for element in agent_input.output:
-#                     embedding = client.embeddings.create(
-#                         input=element.text,
-#                         model='text-embedding-ada-002'
-#                     )
-#                     document = Document.objects.create(
-#                         uid=element.metadata["uid"],
-#                         text=element.text,
-#                         agent=current_agent,  # Or use agent_id=current_agent.id if you prefer
-#                         name=element.metadata["source"],
-#                         embedding=embedding.data[0].embedding
-#                     )
+        try:
+            document = TextLoader(file_path, encoding="UTF-8").load()[0].page_content
+        except RuntimeError or UnicodeDecodeError or FileNotFoundError or ValueError as e:
+            logger.error("Markfown loading failed: %s", e)
+            return []
 
-#             elif current_agent.type == 'chatTrigger':
-#                 # Update memories for a chatTrigger.
-#                 agent_input = ChatTriggerEvent(output=agent_input.output)
-#                 memories_raw = current_agent.properties.get('memories', '[]')
-#                 try:
-#                     memories = json.loads(memories_raw) if isinstance(memories_raw, str) else memories_raw
-#                 except json.JSONDecodeError:
-#                     memories = []
-#                 new_message = {
-#                     "role": "user",
-#                     "content": [{
-#                         "type": "text",
-#                         "text": agent_input.output
-#                     }]
-#                 }
-#                 memories.append(new_message)
-#                 current_agent.properties['memories'] = json.dumps(memories)
-#             elif current_agent.type == 'chat':
-#                 # Retrieve the one-to-one connections for chat_model and memory.
-#                 chat_model_conn = current_agent.connections_out.filter(connection_type='chat_model').first()
-#                 if not chat_model_conn:
-#                     send_update(channel_layer, group_name, -1, 'info', "Workflow failed.")
-#                     return []
-#                 chat_model_agent = chat_model_conn.target
-#                 chat_model = chat_model_agent.properties.get('model', '')
-#                 if not chat_model:
-#                     send_update(channel_layer, group_name, -1, 'info', "Workflow failed.")
-#                     return []
+        title_pattern = r'---\ntitle: (.*?)\n---'
+        document = re.sub(title_pattern, replace_title, document, flags=re.DOTALL)
 
-#                 send_update(channel_layer, group_name, str(chat_model_agent.slug), 'running',
-#                             f"{chat_model_agent.type} in progress...")
+        headers_to_split_on = [
+            ("#", "Header 1"),
+            ('##', 'Header 2'),
+            ('###', 'Header 3'),
+            ('####', 'Header 4'),
+        ]
 
-#                 memory_conn = current_agent.connections_out.filter(connection_type='memory').first()
-#                 chat_memory = []
-#                 if memory_conn:
-#                     memory_agent = memory_conn.target
-#                     mem_raw = memory_agent.properties.get('memories', '[]')
-#                     try:
-#                         chat_memory = json.loads(mem_raw) if isinstance(mem_raw, str) else mem_raw
-#                     except json.JSONDecodeError:
-#                         chat_memory = []
-#                 # Construct the messages for the external chat API.
-#                 messages = [{
-#                     "role": "system",
-#                     "content": [{
-#                         "type": "text",
-#                         "text": (
-#                             "Give a user query, answer it the best you can as a helpful assistant."
-#                         )
-#                     }]
-#                 }]
-#                 messages.extend(chat_memory)
-#                 messages.append({
-#                     "role": "user",
-#                     "content": [{
-#                         "type": "text",
-#                         "text": agent_input.output
-#                     }]
-#                 })
-#                 original_user_message = agent_input.output
+        markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on, strip_headers=False)
+        md_header_splits = markdown_splitter.split_text(document)
 
-#                 retriever_conn = current_agent.connections_out.filter(connection_type='retriever').first()
+        md_header_split_sections = [get_split_headers(md_header_split) for md_header_split in md_header_splits]
 
-#                 if retriever_conn:
-#                     retriever_node = retriever_conn.target
-#                     send_update(channel_layer, group_name, str(retriever_node.slug), 'running',
-#                                 f"{retriever_node.type} in progress...")
-#                     documents = retriever_node.documents.all()
-#                     if documents:
-#                         # Optionally, create a history from previous messages if needed.
-#                         history = "\n\n".join([
-#                             f'role: {message["role"]}\nmessage: {message["content"][0]["text"]}'
-#                             for message in messages
-#                         ])
+        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+            model_name=OPENAI_EMBEDDING_MODEL, chunk_size=1500, chunk_overlap=0,
+        )
 
-#                         # 4. Call the model with your messages and tool definitions.
-#                         response = client.beta.chat.completions.parse(
-#                             model="gpt-4o-mini",
-#                             messages=messages,
-#                             tools=tools,
-#                             response_format=ChatEvent
-#                         )
+        text_splits = []
+        text_split_sections = []
+        for md_header_split, md_header_split_section in zip(md_header_splits, md_header_split_sections):
+            for text_split in text_splitter.split_documents([md_header_split]):
+                text_splits.append(text_split.page_content)
+                text_split_sections.append(md_header_split_section)
+        print(f"\n\n\n{text_splits}\n\n\n")
 
-#                         # Check if the model requested a function call.
-#                         tool_calls = response.choices[0].message.tool_calls
-#                         if tool_calls:
-#                             tool_call = tool_calls[0]
-#                             # Parse the arguments provided by the model.
-#                             args = json.loads(tool_call.function.arguments)
-#                             # Check that the function call name matches our tool.
-#                             if tool_call.function.name == "knowledge_base_search":
-#                                 # 5. Execute the tool function.
-#                                 tool_result = knowledge_base_search_tool(**args)
-#                                 # 6. Append the function call and its result to the messages.
-#                                 messages.append(response.choices[0].message)  # The function call message.
-#                                 messages.append({
-#                                     "role": "tool",
-#                                     "tool_call_id": tool_call.id,
-#                                     "content": tool_result
-#                                 })
-#                                 # 7. Supply the function result back to the model.
-#                                 response_2 = client.beta.chat.completions.parse(
-#                                     model="gpt-4o-mini",
-#                                     messages=messages,
-#                                     tools=tools,
-#                                     response_format=ChatEvent
-#                                 )
-#                                 final_content = response_2.choices[0].message.content.strip()
-#                                 print(final_content)
-#                             else:
-#                                 print("Received an unknown function call:", tool_call.function.name)
-#                         else:
-#                             # If no function call was requested, simply print the response content.
-#                             print(response.choices[0].message.content.strip())
+        return [
+            Element(
+                type='text', text=text_split,
+                metadata={
+                    'source': Path(file_path).name,
+                    'uid': hashlib.sha256(str.encode(text_split)).hexdigest()
+                }
+            )
+            for text_split, md_header_split_section in zip(text_splits, md_header_split_sections)
+        ]
 
-#                     send_update(channel_layer, group_name, str(retriever_node.slug), 'completed',
-#                             f"{retriever_node.type} completed.")
+    def load_text(self, file_path):
+        try:
+            document = TextLoader(file_path, encoding="UTF-8").load()[0].page_content
+        except RuntimeError or UnicodeDecodeError or FileNotFoundError or ValueError:
+            return []
 
-#                 try:
-#                     response = client.beta.chat.completions.parse(
-#                         model='gpt-4o-mini',
-#                         messages=messages,
-#                         response_format=ChatEvent
-#                     )
-#                 except Exception as e:
-#                     send_update(channel_layer, group_name, str(chat_model_agent.slug), 'failed',
-#                                 f"{chat_model_agent.type} failed.")
-#                     return []
-#                 raw_content = response.choices[0].message.content.strip()
-#                 if raw_content.startswith("```json") and raw_content.endswith("```"):
-#                     raw_content = raw_content[7:-3].strip()
-#                 data_dict = json.loads(raw_content)
-#                 chat_data = ChatEvent(**data_dict)
-#                 agent_input = chat_data
+        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+            model_name='text-embedding-ada-002', chunk_size=1500, chunk_overlap=0,
+        )
 
-#                 send_update(channel_layer, group_name, str(chat_model_agent.slug), 'completed',
-#                             f"{chat_model_agent.type} completed.")
+        return [
+            Element(
+                type='text',
+                text=split,
+                metadata={
+                    'source': Path(file_path).name,
+                    'uid': hashlib.sha256(str.encode(split)).hexdigest()
+                }
+            ) for i, split in enumerate(text_splitter.split_text(document))
+        ]
 
-#                 if memory_conn:
-#                     memory_agent = memory_conn.target
-#                     send_update(channel_layer, group_name, str(memory_agent.slug), 'running',
-#                                 f"{memory_agent.type} in progress...")
-#                     try:
-#                         mem_str = memory_agent.properties.get('memories', '[]')
-#                         try:
-#                             chat_memory_list = json.loads(mem_str) if isinstance(mem_str, str) else mem_str
-#                         except json.JSONDecodeError:
-#                             chat_memory_list = []
-#                         new_messages = [
-#                             {
-#                                 "role": "user",
-#                                 "content": [{
-#                                     "type": "text",
-#                                     "text": original_user_message
-#                                 }]
-#                             },
-#                             {
-#                                 "role": "assistant",
-#                                 "content": [{
-#                                     "type": "text",
-#                                     "text": chat_data.output
-#                                 }]
-#                             }
-#                         ]
-#                         chat_memory_list.extend(new_messages)
-#                         memory_agent.properties['memories'] = json.dumps(chat_memory_list)
-#                         memory_agent.save()
-#                         send_update(channel_layer, group_name, str(memory_agent.slug), 'completed',
-#                                     f"{memory_agent.type} completed.")
-#                     except Exception as e:
-#                         logger.exception("Error updating memory node for agent %s", current_agent.slug)
-#                         send_update(channel_layer, group_name, str(memory_agent.slug), 'failed',
-#                                     f"{memory_agent.type} failed.")
+    def load_pdf(self, file_path):
+        try:
+            loader = PyPDFLoader(file_path)
+            documents = [document.page_content for document in PyPDFLoader(file_path).load()]
+        except RuntimeError or UnicodeDecodeError or FileNotFoundError or ValueError as e:
+            logger.error("PDF loading failed: %s", e)
+            return []
 
-#             # Signal completion for the current agent.
-#             send_update(channel_layer, group_name, str(current_agent.slug), 'completed',
-#                         f"{current_agent.type} completed.")
+        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+            model_name='text-embedding-ada-002', chunk_size=1500, chunk_overlap=0,
+        )
 
-#             # Retrieve next agents from outgoing connections of type 'next'.
-#             next_conns = current_agent.connections_out.filter(connection_type='next')
-#             next_agents = [conn.target for conn in next_conns]
-#             if not next_agents:
-#                 return [agent_input.output]
+        texts = []
+        for document in documents:
+            texts.extend(text_splitter.split_text(document))
 
-#             outputs = []
-#             for next_agent in next_agents:
-#                 if next_agent.id in visited:
-#                     continue  # Avoid cycles.
-#                 new_visited = visited.copy()
-#                 new_visited.add(next_agent.id)
-#                 outputs.extend(process_node(next_agent, agent_input, new_visited))
-#             return outputs
-
-#         except Exception as exc:
-#             logger.exception("Error processing agent %s", current_agent.type)
-#             # Notify that the workflow is starting.
-#             send_update(channel_layer, group_name, -1, 'info', "Workflow failed.")
-#             send_update(channel_layer, group_name, str(current_agent.slug), 'failed',
-#                         f"{current_agent.type} failed.")
-#             return []
-
-#     outputs = process_node(trigger_node, initial_input, visited={trigger_node.id})
-#     send_update(channel_layer, group_name, None, 'info', "Workflow completed.")
-#     return outputs
-
-
-import os
-import json
-import logging
-from typing import List, Set, Union, Any
-
-from django.db import transaction
-from django.core.exceptions import ObjectDoesNotExist
-from channels.layers import get_channel_layer
-from celery import shared_task
-
-# Assume these are imported from your project
-# from your_project.models import Workflow, Agent, Document
-# from your_project.api_clients import client, tools, knowledge_base_search_tool
-# from your_project.events import ChatTriggerEvent, ChatEvent, ElementList
-# from your_project.document_loader import DocumentLoader
-# from your_project.utils import send_update
-
-logger = logging.getLogger(__name__)
+        return [
+            Element(
+                type="text",
+                text=split,
+                metadata = {
+                    'source': Path(file_path).name,
+                    'uid': hashlib.sha256(str.encode(split)).hexdigest()
+                }
+            ) for split in texts
+        ]
 
 
 class WorkflowException(Exception):
@@ -496,13 +319,30 @@ def get_embedding(text: str):
         model='text-embedding-ada-002'
     )
 
-@timeout_decorator(timeout=10)
+@timeout_decorator(timeout=60)
 def load_document(file):
     """
     Helper function to load a document with a timeout.
     If the loading takes longer than 60 seconds, a TimeoutWorkflowException will be raised.
     """
     return DocumentLoader(file).load()
+
+def send_update(
+        channel_layer: Any,
+        group_name: str,
+        node_id: Optional[str],
+        status: str,
+        message: str
+) -> None:
+    """Helper to send a workflow update via the channel layer."""
+    payload: Dict[str, Union[str, None]] = {
+        'type': 'workflow.update',
+        'status': status,
+        'message': message,
+    }
+    if node_id:
+        payload['node_id'] = node_id
+    async_to_sync(channel_layer.group_send)(group_name, payload)
 
 
 def update_status(channel_layer, group_name, slug: Union[str, int, None], status: str, message: str) -> None:

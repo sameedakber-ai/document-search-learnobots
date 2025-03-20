@@ -93,7 +93,6 @@ class Document(models.Model):
     date = models.DateTimeField(auto_now_add=True)
     embedding = VectorField(dimensions=1536)
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, null=True, blank=True, related_name='documents')
-    # file = models.ForeignKey(File, on_delete=models.CASCADE, blank=True, null=True, related_name='documents')
 
     class Meta:
         constraints = [

@@ -10,11 +10,19 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import status
+from celery.result import AsyncResult
 
 from .serializers import UserSerializer, DocumentSerializer, FileSerializer, WorkflowSerializer, \
     AgentSerializer, MemorySerializer, NodeConnectionSerializer
 from .services import DocumentProcessService, ChatService
 from .tasks import process_workflow
+from rest_framework_simplejwt.authentication import JWTAuthentication
+
+from asgiref.sync import async_to_sync
+
+class AsyncJWTAuthentication(JWTAuthentication):
+    async def authenticate(self, request):
+        return await sync_to_async(super().authenticate)(request)
 
 
 class UserCreateView(APIView):
@@ -157,9 +165,10 @@ class WorkflowStartView(APIView):
         trigger_id = request.data.get('trigger_id')
         chat_input = request.data.get('input')
 
+        # Dispatch to Celery
         outputs = process_workflow(node_id, trigger_id, chat_input)
-
         return Response({"status": "Workflow started", "outputs": outputs})
+
 
 
 class NodeCreateView(APIView):

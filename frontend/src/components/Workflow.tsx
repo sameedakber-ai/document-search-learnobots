@@ -131,6 +131,7 @@ const Workflow: React.FC = () => {
 	const [queryText, setQueryText] = useState<string>('');
 	const [showChatWindow, setShowChatWindow] = useState<boolean>(false);
 	const [activeNode, setActiveNode] = useState<AgentNode | null>(null);
+	const [activeDocumentLoader, setActiveDocumentLoader] = useState<AgentNode | null>(null);
 	const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
 	const [memories, setMemories] = useState<MemoryItem[]>([]);
 	const [chatInput, setChatInput] = useState<string>('');
@@ -291,6 +292,11 @@ const Workflow: React.FC = () => {
 					},
 				} as AgentNode;
 			});
+
+			const activeChatAgent = agents.find((agent) => agent.data.type === 'chatTrigger');
+			if (activeChatAgent) {
+				handleOpenChat(activeChatAgent.id);
+			}
 
 			setAgents(agents);
 			const newEdges: Edge[] = [];
