@@ -1,1 +1,10 @@
 @import "tailwindcss";
+
+.react-flow__controls button {
+  color: #ffffff !important;
+  background-color: transparent !important;
+  width: 40px !important;
+  height: 40px !important;
+  border-radius: 6px !important;
+  border: 2px solid #ffffff !important;
+}

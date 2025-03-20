@@ -51,37 +51,35 @@ function Home() {
     }
 
     return (
-        <div id="home-id" className="h-screen">
-            <div className="p-4 flex justify-between items-center border-b-1 border-gray-400">
-                <a className="" href="/">
-                    <h1 className="text-2xl">AI Workflow Automation</h1>
-                </a>
-                <div className="flex space-x-10">
-                    <a className="text-lg" href="/profile">Profile</a>
-                    <a className="text-lg" href="/logout">Logout</a>
-                </div>
-            </div>
+  <div id="home-id" className="h-screen flex flex-col">
+    {/* Header */}
 
-            <div className="bg-gray-50">
-                <div className="p-8">
-                    {
-                        workflows.map((workflow) => (
-                            <a href={`/workflows/${workflow.id}`}>
-                                <h2 className="text-2xl ">
-                                    {workflow.name}
-                                </h2>
-                            </a>
-                        ))
-                    }
-                </div>
-                <div className="flex items-center justify-center h-full">
-                    <form onSubmit={handleCreateWorkflow}>
-                        <input type="text" onChange={handleChangeName} value={workflowName} placeholder="New Workflow" className="border-2 p-2 rounded-lg"/>
-                    </form>
-                </div>
-            </div>
-        </div>
-    )
+    {/* Main content area */}
+    <div className="flex-1 bg-gray-50 flex flex-col">
+      <div className="p-8">
+        {workflows.map((workflow) => (
+          <a key={workflow.id} href={`/workflows/${workflow.id}`}>
+            <h2 className="text-2xl">
+              {workflow.name}
+            </h2>
+          </a>
+        ))}
+      </div>
+      <div className="flex items-center justify-center flex-grow">
+        <form onSubmit={handleCreateWorkflow}>
+          <input
+            type="text"
+            onChange={handleChangeName}
+            value={workflowName}
+            placeholder="New Workflow"
+            className="border-2 p-2 rounded-lg"
+          />
+        </form>
+      </div>
+    </div>
+  </div>
+);
+
 }
 
 export default Home;

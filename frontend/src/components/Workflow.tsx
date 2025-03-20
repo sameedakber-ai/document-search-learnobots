@@ -293,10 +293,10 @@ const Workflow: React.FC = () => {
 				} as AgentNode;
 			});
 
-			const activeChatAgent = agents.find((agent) => agent.data.type === 'chatTrigger');
-			if (activeChatAgent) {
-				handleOpenChat(activeChatAgent.id);
-			}
+			// const activeChatAgent = agents.find((agent) => agent.data.type === 'chatTrigger');
+			// if (activeChatAgent) {
+			// 	handleOpenChat(activeChatAgent.id);
+			// }
 
 			setAgents(agents);
 			const newEdges: Edge[] = [];
@@ -643,136 +643,127 @@ const Workflow: React.FC = () => {
 	}
 
 	return (
-		<div className="h-screen">
-		<div className="p-4 flex justify-between items-center border-b-1 border-gray-400">
-		<a className="" href="/">
-		<h1 className="text-2xl">AI Workflow Automation</h1>
-		</a>
-		<div className="flex space-x-10">
-		<a className="text-lg" href="/profile">Profile</a>
-		<a className="text-lg" href="/logout">Logout</a>
-		</div>
-		</div>
-		<div className="relative">
-		{showChatWindow && activeNode &&
-		<div className="absolute bottom-0 w-full bg-white z-100 border-1 rounded-lg">
-		<div className="h-96 overflow-y-auto">
-		<div className="flex justify-between bg-gray-200 w-full p-4 mb-4 items-center">
-		<h1 className="text-2xl">
-		Chat
-		</h1>
-		<div className="flex space-x-4 items-center">
-		<div>
-		Session {activeNode.id}
-		</div>
-		<div>
-		<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-		strokeWidth="1.5" stroke="currentColor" className="size-4">
-		<path strokeLinecap="round" strokeLinejoin="round"
-		d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3"/>
-		</svg>
-		</div>
-		</div>
-		</div>
-		{
-			memories?.map((memory: MemoryItem, index) => {
-				const lastContent = memory.content[memory.content.length - 1]?.text;
-				return (
-					<div key={index} className="w-full px-4">
-					<div className="flex justify-start p-4">
-					<div className="w-[calc(40%)] bg-gray-50 p-4 rounded-xl">
-					{memory.role === 'user' ? lastContent : ''}
-					</div>
-					</div>
-					<div className="flex justify-end p-4">
-					{memory.role === 'assistant' && (
-						<div className="w-[calc(40%)] bg-gray-300 p-4 rounded-xl">
-						{memory.role === 'assistant' ? lastContent : ''}
-						</div>
-						)}
-					</div>
-					</div>
-					);
-			})
-		}
+  <div className="h-screen overflow-hidden flex flex-col bg-gray-900 text-gray-100">
+    {/* Navbar */}
+    <header className="h-16 p-4 flex justify-between items-center border-b border-gray-700">
+      <a href="/">
+        <h1 className="text-2xl">AI Workflow Automation</h1>
+      </a>
+      <div className="flex space-x-10">
+        <a className="text-lg" href="/profile">Profile</a>
+        <a className="text-lg" href="/logout">Logout</a>
+      </div>
+    </header>
 
-		</div>
-		<div className="w-full px-4">
-		<form action="" onSubmit={handleSubmitChat}>
-		<input type="text" className="border-1 rounded-lg p-2 w-full" value={chatInput}
-		onChange={handleUpdateChatInput}/>
-		</form>
-		</div>
-		</div>
-	}
-	<button className="z-50 absolute rounded-md border-1 p-2 right-4 top-4 hover:bg-black hover:text-white">
-	Run
-	</button>
-	<div className="absolute bg-white left-4 top-4 z-50">
-	{
-		!showSidebar ? (
-			<button className="" onClick={handleOpenSidebar}>
-			<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-			strokeWidth="1.5" stroke="currentColor" className="size-8">
-			<path strokeLinecap="round" strokeLinejoin="round"
-			d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
-			</svg>
-
-			</button>
-			) : (
-			<div className="rounded-lg">
-			<div className="flex justify-center space-y-4">
-			<div className="space-y-6">
-			<div>
-			<input type="text" className="p-3 border-1 rounded-xl"
-			placeholder="Search Agents ..."
-			onChange={handleSearchAgents}/>
-			</div>
-			<div>
-			{
-				queryText && filteredList.map(({item, highlightRanges}) => (
-					<div key={item.key} className="border-t-1 border-gray-300 p-2"
-					onClick={() => handleAddAgent(item.key)}>
-					<div className="text-sm">
-					<div className="text-lg">
-					{item.name}
-					</div>
-					<Highlight
-					text={item.description}
-					ranges={highlightRanges}
-					/>
-					</div>
-					</div>
-					))
-			}
-			</div>
-			</div>
-			</div>
-			</div>
-			)
-		}
-		</div>
-
-		<div style={{width: '100vw', height: '100vh'}}>
-		<ReactFlow
-		nodes={agents}
-		edges={edges}
-		nodeTypes={nodeTypes}
-		edgeTypes={edgeTypes}
-		onNodesChange={onAgentsChange}
-		onEdgesChange={onEdgesChange}
-		onConnect={onConnect}
-		fitView
+    {/* Remaining space divided into 2 rows (equal height) & 2 columns */}
+    <div className="flex-1 grid grid-rows-2 grid-cols-[75%_25%]">
+      
+      {/* Top Left: ReactFlow Component */}
+      <div className="border border-gray-700 p-2">
+        <ReactFlow
+		  nodes={agents}
+		  edges={edges}
+		  nodeTypes={nodeTypes}
+		  edgeTypes={edgeTypes}
+		  onNodesChange={onAgentsChange}
+		  onEdgesChange={onEdgesChange}
+		  onConnect={onConnect}
+		  fitView
 		>
-		<Controls/>
-		<MiniMap/>
-		<Background gap={12} size={1}/>
+		  <Controls
+		    showZoom
+		    showFitView
+		    showInteractive={false}
+		    position="bottom-left"
+		    style={{
+		      flexDirection: "row",
+		      gap: "8px",
+		      backgroundColor: "transparent",
+		      padding: "8px",
+		      borderRadius: "8px",
+		    }}
+		  />
+		  <Background gap={12} size={1} />
 		</ReactFlow>
-		</div>
-		</div>
-		</div>
-		)
-	;
+
+      </div>
+      
+      {/* Top Right: Console */}
+      <div className="border border-gray-700 bg-gray-800 text-gray-100 p-4 overflow-y-auto">
+        {/* Insert dynamic console logs here */}
+        <p>Console output will appear here...</p>
+      </div>
+      
+      {/* Bottom Left: Chat Window */}
+      <div className="border border-gray-700 flex flex-col">
+        {/* Chat Messages Area */}
+        <div className="flex-1 p-4 overflow-y-auto">
+          <h1 className="text-2xl mb-2">Chat</h1>
+          {activeNode && (
+            <div className="text-sm text-gray-400 mb-4">
+              Session {activeNode.id}
+            </div>
+          )}
+          {memories?.map((memory: MemoryItem, index) => {
+            const lastContent = memory.content[memory.content.length - 1]?.text;
+            return (
+              <div key={index} className="mb-4">
+                {memory.role === 'user' && (
+                  <div className="flex justify-start">
+                    <div className="w-[40%] bg-gray-800 text-gray-100 p-4 rounded-xl">
+                      {lastContent}
+                    </div>
+                  </div>
+                )}
+                {memory.role === 'assistant' && (
+                  <div className="flex justify-end">
+                    <div className="w-[40%] bg-gray-700 text-gray-100 p-4 rounded-xl">
+                      {lastContent}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {/* Chat Input */}
+        <div className="p-4 border-t border-gray-700">
+          <form onSubmit={handleSubmitChat}>
+            <input
+              type="text"
+              className="border border-gray-600 rounded-lg p-2 w-full bg-gray-800 text-gray-100"
+              value={chatInput}
+              onChange={handleUpdateChatInput}
+              placeholder="Type your message..."
+            />
+          </form>
+        </div>
+      </div>
+      
+      {/* Bottom Right: File Upload */}
+      <div className="border border-gray-700 p-4">
+        <div className="border-2 border-dashed border-gray-600 h-full flex items-center justify-center relative bg-gray-800">
+          <p className="mb-2 text-center">Drag and drop files here or click to upload</p>
+          <input
+            type="file"
+            multiple
+            className="absolute w-full h-full opacity-0 cursor-pointer"
+          />
+        </div>
+      </div>
+      
+    </div>
+    
+    {/* Optional Run button overlay */}
+    <button
+      className="absolute top-4 right-4 z-50 rounded-md border border-gray-600 p-2 hover:bg-gray-700 hover:text-white"
+    >
+      Run
+    </button>
+  </div>
+);
+
+
 
 };
 
