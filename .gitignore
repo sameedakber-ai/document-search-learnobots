@@ -9,3 +9,6 @@ backend/api/__pycache__
 neo4j
 backend/api/__pycache__/*
 backend/api/async_tasks.py
+node_modules/
+package-lock.json
+package.json
