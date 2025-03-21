@@ -1,25 +1,25 @@
-import {v4 as uuidv4} from "uuid";
-import {useParams} from "react-router-dom";
+import { v4 as uuidv4 } from "uuid";
+import { useParams } from "react-router-dom";
 import api from "../api";
 
 import React, {
-	ChangeEvent,
-	FormEvent,
-	useCallback,
-	useEffect, useRef,
-	useState
+    ChangeEvent,
+    FormEvent,
+    useCallback,
+    useEffect,
+    useRef,
+    useState
 } from "react";
 
 import {
-	ReactFlowProvider,
-	ReactFlow,
-	useNodesState,
-	useEdgesState,
-	addEdge,
-	Edge,
-	Controls,
-	MiniMap,
-	Background,
+    ReactFlowProvider,
+    ReactFlow,
+    useNodesState,
+    useEdgesState,
+    addEdge,
+    Edge,
+    Controls,
+    Background,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -30,747 +30,873 @@ import MemoryNode from "./MemoryNode.tsx";
 import ChatModelNode from "./ChatModelNode.tsx";
 import VectorStoreNode from "./VectorStoreNode.tsx";
 
-import {AgentNode, AgentData, isAgentNodeOfType, getFlowType, DocumentLoaderProperties} from '../nodeTypes';
-import {MemoryItem} from "../nodeTypes.ts";
+import { AgentNode, AgentData, isAgentNodeOfType, getFlowType, DocumentLoaderProperties, ChatTriggerProperties } from '../nodeTypes';
+import { MemoryItem } from "../nodeTypes.ts";
 
-import {useFuzzySearchList, Highlight} from '@nozbe/microfuzz/react'
+import { useFuzzySearchList, Highlight } from '@nozbe/microfuzz/react'
 
 const nodeTypes = {
-	documentLoader: DocumentLoaderAgent,
-	chat: ChatAgent,
-	chatTrigger: ChatTriggerNode,
-	memory: MemoryNode,
-	chatModel: ChatModelNode,
-	vectorStore: VectorStoreNode
+    documentLoader: DocumentLoaderAgent,
+    chat: ChatAgent,
+    chatTrigger: ChatTriggerNode,
+    memory: MemoryNode,
+    chatModel: ChatModelNode,
+    vectorStore: VectorStoreNode
 };
 
 
 const edgeTypes = {};
 
 export interface FileResponse {
-	id: string;
-	file: string;
-	date: string;
-	agent: string;
+    id: string;
+    file: string;
+    date: string;
+    agent: string;
 }
 
 export interface BaseProperties {
-	position_x: number;
-	position_y: number;
+    position_x: number;
+    position_y: number;
+    memories: MemoryItem[];
 }
 
 export interface ConnectionResponse {
-	target: string;
-	connection_type: string;
+    target: string;
+    connection_type: string;
 }
 
 export interface AgentResponse {
-	id: string;
-	slug: string;
-	type: string;
-	workflow: string;
-	properties: BaseProperties;
-	connections_out: ConnectionResponse[];
+    id: string;
+    slug: string;
+    type: string;
+    workflow: string;
+    properties: BaseProperties;
+    connections_out: ConnectionResponse[];
+    memories: ChatMemory[];
+}
+
+export interface ChatMemory {
+    id: string;
+    input: string;
+    output?: string;
+    agent: string;
 }
 
 export interface FileType {
-	id: string;
-	extension: string;
-	name: string;
-	date: string;
+    id: string;
+    extension: string;
+    name: string;
+    date: string;
 }
 
 export interface OnConnectParams {
-	source: string;
-	target: string;
-	sourceHandle: string | null;
-	targetHandle: string | null;
+    source: string;
+    target: string;
+    sourceHandle: string | null;
+    targetHandle: string | null;
+}
+
+export interface Log {
+    type: string;
+    message: string;
 }
 
 const initialNodes: AgentNode[] = [];
 const initialEdges: Edge[] = [];
 
-const nodeLabels = [
-{
-	key: 1,
-	name: 'documentLoader',
-	description: 'Load documents for RAG',
-},
-{
-	key: 2,
-	name: 'chat',
-	description: 'Chat with LLM',
-},
-{
-	key: 3,
-	name: 'chatTrigger',
-	description: 'When chat message received trigger node',
-},
-{
-	key: 4,
-	name: 'memory',
-	description: 'Memory for Chat Agents',
-},
-{
-	key: 5,
-	name: 'chatModel',
-	description: 'Chat Model for conversational Chat AI Agents',
-},
-{
-	key: 6,
-	name: 'vectorStore',
-	description: 'Information retrieval from documents',
-}
+const nodeLabels = [{
+        key: 1,
+        name: 'documentLoader',
+        description: 'Load documents for RAG',
+    },
+    {
+        key: 2,
+        name: 'chat',
+        description: 'Chat with LLM',
+    },
+    {
+        key: 3,
+        name: 'chatTrigger',
+        description: 'When chat message received trigger node',
+    },
+    {
+        key: 4,
+        name: 'memory',
+        description: 'Memory for Chat Agents',
+    },
+    {
+        key: 5,
+        name: 'chatModel',
+        description: 'Chat Model for conversational Chat AI Agents',
+    },
+    {
+        key: 6,
+        name: 'vectorStore',
+        description: 'Information retrieval from documents',
+    }
 ];
 
 const Workflow: React.FC = () => {
-	const {id} = useParams<{ id: string }>();
-	const [agents, setAgents, onAgentsChange] = useNodesState<AgentNode>(initialNodes);
-	const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initialEdges)
-	const [showSidebar, setShowSidebar] = useState<boolean>(false);
-	const [queryText, setQueryText] = useState<string>('');
-	const [showChatWindow, setShowChatWindow] = useState<boolean>(false);
-	const [activeNode, setActiveNode] = useState<AgentNode | null>(null);
-	const [activeDocumentLoader, setActiveDocumentLoader] = useState<AgentNode | null>(null);
-	const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
-	const [memories, setMemories] = useState<MemoryItem[]>([]);
-	const [chatInput, setChatInput] = useState<string>('');
-	const [messages, setMessages] = useState<string[]>([]);
-	const [warnings, setWarnings] = useState<string[]>([]);
+    const { id } = useParams < { id: string } > ();
+    const [agents, setAgents, onAgentsChange] = useNodesState < AgentNode > (initialNodes);
+    const [edges, setEdges, onEdgesChange] = useEdgesState < Edge > (initialEdges)
+    const [showSidebar, setShowSidebar] = useState < boolean > (false);
+    const [queryText, setQueryText] = useState < string > ('');
+    const [showChatWindow, setShowChatWindow] = useState < boolean > (false);
+    const [activeNode, setActiveNode] = useState < AgentNode | null > (null);
+    const [activeDocumentLoader, setActiveDocumentLoader] = useState < AgentNode | null > (null);
+    const [pendingNodeId, setPendingNodeId] = useState < string | null > (null);
+    const [memories, setMemories] = useState < ChatMemory[] > ([]);
+    const [chatInput, setChatInput] = useState < string > ('');
+    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+    const textareaRef = useRef < HTMLTextAreaElement > (null);
+    const [logs, setLogs] = useState < Log[] > ([]);
+    const logsContainerRef = useRef < HTMLDivElement > (null);
+    const chatContainerRef = useRef < HTMLDivElement > (null);
+    const [disableInteraction, setDisableInteraction] = useState < boolean > (false);
 
-	const filteredList = useFuzzySearchList({
-		list: nodeLabels,
-		queryText,
-		getText: (item) => [item.description],
-		mapResultItem: ({item, matches: [highlightRanges]}) => ({item, highlightRanges})
-	});
+    // Add this keydown handler
+    const handleKeyDown = (e: React.KeyboardEvent < HTMLTextAreaElement > ) => {
+        if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            handleSubmitChat(e);
+        }
+    };
 
-	const agentsRef = useRef<AgentNode[]>(agents);
-	useEffect(() => {
-		agentsRef.current = agents;
-	}, [agents]);
+    const filteredList = useFuzzySearchList({
+        list: nodeLabels,
+        queryText,
+        getText: (item) => [item.description],
+        mapResultItem: ({ item, matches: [highlightRanges] }) => ({ item, highlightRanges })
+    });
 
+    const agentsRef = useRef < AgentNode[] > (agents);
+    useEffect(() => {
+        agentsRef.current = agents;
+    }, [agents]);
 
-	const handleDeleteNode = useCallback(async (id: string) => {
-		const res = await api.delete(`/api/agent/${id}/delete/`);
-		console.log(res.data);
-		setAgents(prevAgents => prevAgents.filter(agent => agent.id !== id));
-	}, [setAgents]);
+    // Auto-scroll to bottom when logs change
+    useEffect(() => {
+        if (logsContainerRef.current) {
+            logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
+        }
+    }, [logs]);
 
-	const handleOpenChat = useCallback((nodeId: string) => {
-		const currentAgents = agentsRef.current;
-		if (currentAgents.length === 0) {
-			setPendingNodeId(nodeId);
-			setShowChatWindow(true);
-			return;
-		}
-		const node = currentAgents.find((agent) => agent.id === nodeId) || null;
-		console.log(node?.id);
-		setActiveNode(node);
-		setShowChatWindow(true);
-	}, []);
+    useEffect(() => {
+        if (chatContainerRef.current) {
+            chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+        }
+    }, [memories]);
 
+    // Add this effect to handle textarea height
+    useEffect(() => {
+        if (textareaRef.current) {
+            const textarea = textareaRef.current;
+            const lineHeight = parseInt(getComputedStyle(textarea).lineHeight);
 
-	useEffect(() => {
-		const wsUrl = `ws://localhost:8000/ws/workflow/${id}/`;
-		const socket = new WebSocket(wsUrl);
+            // Reset height first to get correct scrollHeight
+            textarea.style.height = 'auto';
 
-		socket.onopen = () => {
-			console.log('WebSocket connection opened');
-		};
+            // Calculate maximum height for 5 lines
+            const maxHeight = lineHeight * 5;
+            const newHeight = Math.min(textarea.scrollHeight, maxHeight);
 
-		socket.onmessage = (event) => {
-			const data = JSON.parse(event.data);
-			setMessages(prevMessages => [...prevMessages, data.message]);
-			console.log(data.message);
-
-			if (data.node_id === -1) {
-				setAgents(prevAgents =>
-					prevAgents.map(agent => {
-						if (agent.data.status === 'running') {
-							return { ...agent, data: { ...agent.data, status: 'failed' } };
-						} else if (agent.data.status === 'completed') {
-							return agent;
-						} else {
-							return { ...agent };
-						}
-					})
-					);
-
-				return;
-			}
-
-			else if (data.node_id === 1) {
-				setWarnings((prev) => [...prev, data.message]);
-				console.log(data.message);
-				return;
-			}
+            textarea.style.height = `${newHeight}px`;
+            textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
+        }
+    }, [chatInput]);
 
 
-			setAgents(prevAgents =>
-				prevAgents.map(agent =>
-					agent.id === data.node_id
-					? {...agent, data: {...agent.data, status: data.status}}
-					: agent
-					)
-				);
-		};
+    const handleDeleteNode = useCallback(async (id: string) => {
+        const res = await api.delete(`/api/agent/${id}/delete/`);
+        console.log(res.data);
+        setAgents(prevAgents => prevAgents.filter(agent => agent.id !== id));
+    }, [setAgents]);
 
-		socket.onerror = (error) => {
-			console.error('WebSocket error:', error);
-		};
-
-		socket.onclose = () => {
-			console.log('WebSocket connection closed');
-		};
-
-		// Cleanup on component unmount
-		return () => {
-			socket.close();
-		};
-	}, [id, setAgents]); // Removed `messages` from dependency array
-
-	const handleRunDocumentLoaderNode = useCallback(
-		async (triggerId: string) => {
-			const res = await api.post(`/api/start-workflow/`, {
-				node_id: id,
-				trigger_id: triggerId,
-				input: chatInput,
-			});
-			console.log(res.data);
-		},
-  [id] // dependencies that affect this function
-  );
+    const handleOpenChat = useCallback((nodeId: string) => {
+        const currentAgents = agentsRef.current;
+        if (currentAgents.length === 0) {
+            setPendingNodeId(nodeId);
+            setShowChatWindow(true);
+            return;
+        }
+        const node = currentAgents.find((agent) => agent.id === nodeId) || null;
+        console.log(node?.id);
+        setActiveNode(node);
+        setShowChatWindow(true);
+    }, []);
 
 
-	const getAgents = useCallback(async (): Promise<void> => {
-		try {
-			const { data } = await api.get(`api/workflow/${id}/agents/`);
-			const agents: AgentNode[] = data.map((agentData: AgentResponse) => {
-				const next_agents: string[] = [];
-				let memory_node: string | undefined = undefined;
-				let chat_model_node: string | undefined = undefined;
-				let retriever_node: string | undefined = undefined;
+    useEffect(() => {
+        const wsUrl = `ws://localhost:8000/ws/workflow/${id}/`;
+        const socket = new WebSocket(wsUrl);
 
-				agentData.connections_out.forEach((conn: ConnectionResponse) => {
-					switch (conn.connection_type) {
-					case 'next':
-						next_agents.push(conn.target);
-						break;
-					case 'memory':
-						memory_node = conn.target;
-						break;
-					case 'chat_model':
-						chat_model_node = conn.target;
-						break;
-					case 'retriever':
-						retriever_node = conn.target;
-						break;
-					default:
-						break;
-					}
-				});
+        socket.onopen = () => {
+            console.log('WebSocket connection opened');
+        };
 
-				return {
-					id: agentData.slug,
-					type: agentData.type,
-					data: {
-						...agentData,
-						next_agents,
-						memory_node,
-						chat_model_node,
-						retriever_node,
-						...(agentData.type === "chatTrigger" ? { onOpenChat: handleOpenChat } : {}),
-						status: 'pending',
-						onDelete: handleDeleteNode,
-						flowType: getFlowType(agentData.type),
-						onRun: handleRunDocumentLoaderNode,
-					},
-					position: {
-						x: agentData.properties.position_x,
-						y: agentData.properties.position_y,
-					},
-				} as AgentNode;
-			});
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            console.log(data.message);
 
-			// const activeChatAgent = agents.find((agent) => agent.data.type === 'chatTrigger');
-			// if (activeChatAgent) {
-			// 	handleOpenChat(activeChatAgent.id);
-			// }
+            switch (data.node_id) {
+                case -1:
+                    setAgents(prevAgents =>
+                        prevAgents.map(agent => {
+                            if (agent.data.status === 'running') {
+                                return { ...agent, data: { ...agent.data, status: 'failed' } };
+                            } else if (agent.data.status === 'completed') {
+                                return agent;
+                            } else {
+                                return { ...agent };
+                            }
+                        })
+                    );
+                    setLogs((prev) => [...prev, { type: 'error', message: 'Error: ' + data.message }]);
+                    return;
 
-			setAgents(agents);
-			const newEdges: Edge[] = [];
-			agents.forEach((agent) => {
-      			// Next Agents: no special handle.
-				agent.data.next_agents?.forEach((target: string) => {
-					newEdges.push({
-						id: uuidv4(),
-						source: agent.id,
-						target,
-						animated: true,
-						style: { stroke: '#f6ab6c', strokeDasharray: '5,5' },
-					});
-				});
+                case 1:
+                    setLogs((prev) => [...prev, { type: 'warning', message: 'Warning: ' + data.message }]);
+                    return;
+                default:
+                    setAgents(prevAgents =>
+                        prevAgents.map(agent =>
+                            agent.id === data.node_id ? { ...agent, data: { ...agent.data, status: data.status } } :
+                            agent
+                        )
+                    );
+                    setLogs((prev) => [...prev, { type: 'info', message: 'Info: ' + data.message }]);
+                    return;
+            }
+        };
 
-      			// Memory Node: use memory prefix on both source and target.
-				if (agent.data.memory_node) {
-					newEdges.push({
-						id: uuidv4(),
-						source: agent.id,
-						sourceHandle: `memory-${agent.id}`,
-						target: agent.data.memory_node,
-						targetHandle: `memory-${agent.data.memory_node}`,
-						animated: true,
-						style: { stroke: '#f6ab6c', strokeDasharray: '5,5' },
-					});
-				}
+        socket.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
 
-      			// Chat Model Node: use chatModel prefix.
-				if (agent.data.chat_model_node) {
-					newEdges.push({
-						id: uuidv4(),
-						source: agent.id,
-						sourceHandle: `chatModel-${agent.id}`,
-						target: agent.data.chat_model_node,
-						targetHandle: `chatModel-${agent.data.chat_model_node}`,
-						animated: true,
-						style: { stroke: '#f6ab6c', strokeDasharray: '5,5' },
-					});
-				}
+        socket.onclose = () => {
+            console.log('WebSocket connection closed');
+        };
 
-      			// Retriever Node: use retriever prefix.
-				if (agent.data.retriever_node) {
-					newEdges.push({
-						id: uuidv4(),
-						source: agent.id,
-						sourceHandle: `retriever-${agent.id}`,
-						target: agent.data.retriever_node,
-						targetHandle: `retriever-${agent.data.retriever_node}`,
-						animated: true,
-						style: { stroke: '#f6ab6c', strokeDasharray: '5,5' },
-					});
-				}
-			});
-			setEdges((prev) => [...prev, ...newEdges]);
+        // Cleanup on component unmount
+        return () => {
+            socket.close();
+        };
+    }, [id, setAgents]); // Removed `messages` from dependency array
 
-		} catch (error) {
-			alert(error);
-		}
-	}, [
-		handleDeleteNode,
-		handleOpenChat,
-		id,
-		setAgents,
-		setEdges,
-		getFlowType,
-		handleRunDocumentLoaderNode
-		]);
+    const handleRunDocumentLoaderNode = useCallback(
+        async (triggerId: string) => {
+                const res = await api.post(`/api/start-workflow/`, {
+                    node_id: id,
+                    trigger_id: triggerId,
+                    input: chatInput,
+                });
+                console.log(res.data);
+            },
+            [id] // dependencies that affect this function
+    );
 
 
+    const getAgents = useCallback(async (): Promise < void > => {
+        try {
+            const { data } = await api.get(`api/workflow/${id}/agents/`);
+            const agents: AgentNode[] = data.map((agentData: AgentResponse) => {
+                const next_agents: string[] = [];
+                let memory_node: string | undefined = undefined;
+                let chat_model_node: string | undefined = undefined;
+                let retriever_node: string | undefined = undefined;
 
-	useEffect(() => {
-		getAgents().then(r => console.log(r));
-		// getChatMemories().then(r => console.log(r));
-	}, [getAgents]);
+                agentData.connections_out.forEach((conn: ConnectionResponse) => {
+                    switch (conn.connection_type) {
+                        case 'next':
+                            next_agents.push(conn.target);
+                            break;
+                        case 'memory':
+                            memory_node = conn.target;
+                            break;
+                        case 'chat_model':
+                            chat_model_node = conn.target;
+                            break;
+                        case 'retriever':
+                            retriever_node = conn.target;
+                            break;
+                        default:
+                            break;
+                    }
+                });
 
-	const onConnect = useCallback(async (params: OnConnectParams): Promise<void> => {
-		const {source, sourceHandle, target, targetHandle} = params;
+                if (agentData.type === 'chatTrigger') {
+                    console.log("memories: ", agentData.memories);
+                    setMemories(agentData.memories || []);
+                }
 
-		const isCircular = (sourceId: string, targetId: string, edges: Edge[]): boolean => {
-			const visited = new Set<string>();
-			const stack = [targetId];
-			while (stack.length > 0) {
-				const current = stack.pop();
-				if (current === sourceId) return true;
-				visited.add(current!);
-				edges.forEach((edge) => {
-					if (edge.source === current && !visited.has(edge.target)) {
-						stack.push(edge.target);
-					}
-				});
-			}
-			return false;
-		};
+                return {
+                    id: agentData.slug,
+                    type: agentData.type,
+                    data: {
+                        ...agentData,
+                        next_agents,
+                        memory_node,
+                        chat_model_node,
+                        retriever_node,
+                        ...(agentData.type === "chatTrigger" ? { onOpenChat: handleOpenChat } : {}),
+                        status: 'pending',
+                        onDelete: handleDeleteNode,
+                        flowType: getFlowType(agentData.type),
+                        onRun: handleRunDocumentLoaderNode
+                    },
+                    position: {
+                        x: agentData.properties.position_x,
+                        y: agentData.properties.position_y,
+                    },
+                }
+            });
 
-		const isValid = (sourceHandleId: string | null, targetHandleId: string | null): boolean => {
-			if (!sourceHandleId || !targetHandleId) {
-				return false;
-			}
-			const getPrefix = (handleId: string): string => handleId.split('-')[0];
-			return getPrefix(sourceHandleId) === getPrefix(targetHandleId);
-		};
+            const activeChatAgent = agents.find((agent) => agent.data.type === 'chatTrigger');
+            if (activeChatAgent) {
+                setActiveNode(activeChatAgent);
+            };
 
-		if (!isCircular(source, target, edges) && isValid(sourceHandle, targetHandle)) {
-			const newEdgeId = uuidv4();
-			setEdges((prevEdges) =>
-				addEdge(
-				{
-					...params,
-					id: newEdgeId,
-					animated: true,
-					style: {stroke: '#f6ab6c', strokeDasharray: '5,5'},
-				},
-				prevEdges
-				)
-				);
-			const sourceAgent = agents.find(agent => agent.id === source);
-			const targetAgent = agents.find(agent => agent.id === target);
+            const activeDocumentLoader = agents.find((agent) => agent.data.type === 'documentLoader');
+            if (activeDocumentLoader) {
+                setActiveDocumentLoader(activeDocumentLoader);
+            };
 
-			let connectionType = 'next';
+            setAgents(agents);
+            const newEdges: Edge[] = [];
+            agents.forEach((agent) => {
+                // Next Agents: no special handle.
+                agent.data.next_agents?.forEach((target: string) => {
+                    newEdges.push({
+                        id: uuidv4(),
+                        source: agent.id,
+                        target,
+                        animated: true,
+                        style: { stroke: '#f6ab6c', strokeDasharray: '5,5' },
+                    });
+                });
 
-			if (sourceAgent && targetAgent) {
-			  // Determine the connection type based on target agent type.
-				if (targetAgent.type === 'memory') {
-					connectionType = 'memory';
-				} else if (targetAgent.type === 'chatModel') {
-					connectionType = 'chat_model';
-				} else if (targetAgent.type === 'vectorStore') {
-					if (targetHandle?.split("-")[0] === 'main') {
-						connectionType = 'next'
-					}
-					else if (targetHandle?.split("-")[0] === 'retriever') {
-						connectionType = 'retriever';
-					}
-				} else {
-					connectionType = 'next';
-				}
+                // Memory Node: use memory prefix on both source and target.
+                if (agent.data.memory_node) {
+                    newEdges.push({
+                        id: uuidv4(),
+                        source: agent.id,
+                        sourceHandle: `memory-${agent.id}`,
+                        target: agent.data.memory_node,
+                        targetHandle: `memory-${agent.data.memory_node}`,
+                        animated: true,
+                        style: { stroke: '#f6ab6c', strokeDasharray: '5,5' },
+                    });
+                }
 
-			  // Create the payload according to the serializer's expected fields.
-				const payload = {
-					connection_type: connectionType,
-				source: sourceAgent.id,  // ensure this is the agent's unique identifier
-				target: targetAgent.id,  // ensure this is the agent's unique identifier
-			};
+                // Chat Model Node: use chatModel prefix.
+                if (agent.data.chat_model_node) {
+                    newEdges.push({
+                        id: uuidv4(),
+                        source: agent.id,
+                        sourceHandle: `chatModel-${agent.id}`,
+                        target: agent.data.chat_model_node,
+                        targetHandle: `chatModel-${agent.data.chat_model_node}`,
+                        animated: true,
+                        style: { stroke: '#f6ab6c', strokeDasharray: '5,5' },
+                    });
+                }
 
-			  // Send the payload to the connection creation endpoint.
-			const res = await api.post('/api/connection/create/', payload);
+                // Retriever Node: use retriever prefix.
+                if (agent.data.retriever_node) {
+                    newEdges.push({
+                        id: uuidv4(),
+                        source: agent.id,
+                        sourceHandle: `retriever-${agent.id}`,
+                        target: agent.data.retriever_node,
+                        targetHandle: `retriever-${agent.data.retriever_node}`,
+                        animated: true,
+                        style: { stroke: '#f6ab6c', strokeDasharray: '5,5' },
+                    });
+                }
+            });
+            setEdges((prev) => [...prev, ...newEdges]);
 
-			const connectionData = res.data as ConnectionResponse;
+        } catch (error) {
+            alert(error);
+        }
+    }, [
+        handleDeleteNode,
+        handleOpenChat,
+        id,
+        setAgents,
+        setEdges,
+        getFlowType,
+        handleRunDocumentLoaderNode,
+    ]);
 
-			switch (connectionData.connection_type) {
-			case "chat_model":
-				sourceAgent.data.chat_model_node = connectionData.target;
-				break;
-			case "memory":
-				sourceAgent.data.memory_node = connectionData.target;
-				break;
-			case "retriever":
-				sourceAgent.data.retriever_node = connectionData.target;
-				break;
-			default:
-				sourceAgent.data.next_agents?.push(connectionData.target);
-			}
-		}
-	} else {
-		alert('Circular connection is not allowed!');
-	}
-}, [agents, edges, setEdges]);
 
-	const handleOpenSidebar = () => {
-		setShowSidebar(true);
-	};
 
-	const handleSearchAgents = (e: ChangeEvent<HTMLInputElement>) => {
-		setQueryText(e.target.value);
-	};
+    useEffect(() => {
+        getAgents().then(r => console.log(r));
+    }, [getAgents]);
 
-	const handleAddAgent = async (key: number) => {
-		console.log(key);
-		const foundAgent = nodeLabels.find((agent) => agent.key === key);
-		console.log(foundAgent);
-		if (!foundAgent) return;
+    const onConnect = useCallback(async (params: OnConnectParams): Promise < void > => {
+        const { source, sourceHandle, target, targetHandle } = params;
 
-		const agentType = foundAgent.name;
-		const slug = uuidv4();
+        const isCircular = (sourceId: string, targetId: string, edges: Edge[]): boolean => {
+            const visited = new Set < string > ();
+            const stack = [targetId];
+            while (stack.length > 0) {
+                const current = stack.pop();
+                if (current === sourceId) return true;
+                visited.add(current!);
+                edges.forEach((edge) => {
+                    if (edge.source === current && !visited.has(edge.target)) {
+                        stack.push(edge.target);
+                    }
+                });
+            }
+            return false;
+        };
 
-		let newAgentData: AgentData;
+        const isValid = (sourceHandleId: string | null, targetHandleId: string | null): boolean => {
+            if (!sourceHandleId || !targetHandleId) {
+                return false;
+            }
+            const getPrefix = (handleId: string): string => handleId.split('-')[0];
+            return getPrefix(sourceHandleId) === getPrefix(targetHandleId);
+        };
 
-		if (agentType === 'documentLoader') {
-			newAgentData = {
-				slug: slug,
-				type: 'documentLoader',
-				workflow: id,
-				next_agents: [],
-				properties: {
-					files: [],
-					embedding_model: 'text-embedding-ada-002',
-					position_x: 0,
-					position_y: 0,
-				},
-				onDelete: handleDeleteNode,
-				status: 'pending',
-				flowType: 'trigger',
-				onRun: handleRunDocumentLoaderNode,
-				onFilesUpdate: handleUpdateFiles
-			};
-		} else if (agentType === 'chat') {
-			newAgentData = {
-				slug: slug,
-				type: 'chat',
-				workflow: id,
-				next_agents: [],
-				properties: {
-					generation_model: 'gpt-4o',
-					temperature: 0.5,
-					context: '',
-					prompt: '',
-					position_x: 0,
-					position_y: 0,
-				},
-				status: 'pending',
-				onDelete: handleDeleteNode,
-				flowType: 'main'
-			};
-		} else if (agentType === 'chatTrigger') {
-			newAgentData = {
-				slug: slug,
-				type: 'chatTrigger',
-				workflow: id,
-				next_agents: [],
-				onOpenChat: handleOpenChat,
-				properties: {
-					position_x: 0,
-					position_y: 0,
-					memories: []
-				},
-				status: 'pending',
-				onDelete: handleDeleteNode,
-				flowType: 'trigger'
-			}
-		} else if (agentType === 'memory') {
-			newAgentData = {
-				slug: slug,
-				type: 'memory',
-				workflow: id,
-				next_agents: [],
-				properties: {
-					position_x: 0,
-					position_y: 0,
-					memories: []
-				},
-				status: 'pending',
-				onDelete: handleDeleteNode,
-				flowType: 'sub'
-			}
-		} else if (agentType === 'vectorStore') {
-			newAgentData = {
-				slug: slug,
-				type: 'vectorStore',
-				workflow: id,
-				next_agents: [],
-				properties: {
-					position_x: 0,
-					position_y: 0,
-				},
-				status: 'pending',
-				onDelete: handleDeleteNode,
-				flowType: 'tool'
-			}
-		} else if (agentType === 'chatModel') {
-			newAgentData = {
-				slug: slug,
-				type: 'chatModel',
-				workflow: id,
-				next_agents: [],
-				properties: {
-					position_x: 0,
-					position_y: 0,
-					service: 'openai',
-					model: 'gpt-4o'
-				},
-				status: 'pending',
-				onDelete: handleDeleteNode,
-				flowType: 'sub'
-			}
-		} else {
-			return;
-		}
-
-		const newNode: AgentNode = {
-			id: slug,
-			type: newAgentData.type,
-			data: newAgentData,
-			position: {x: 0, y: 0},
-		};
-
-		setAgents((prevAgents) => [...prevAgents, newNode]);
-
-		const res = await api.post(`/api/agent/create/`, newAgentData);
-		console.log(res.data);
-	};
-
-	const handleUpdateChatInput = (e: ChangeEvent<HTMLInputElement>) => {
-		setChatInput(e.target.value);
-	}
-
-	const handleSubmitChat = async (e: FormEvent<HTMLFormElement>) => {
-		e.preventDefault();
-		const newMemory: MemoryItem = {
-			role: "user",
-			content: [{
-				type: "text",
-				text: chatInput
-			}]
-		};
-		const node = agents.find((agent) => isAgentNodeOfType(agent, 'chatTrigger'));
-		if (!node) {
-			return;
-		}
-
-		// node.data.properties.memories?.push(newMemory);
-		setMemories((prevMemories) => [...prevMemories, newMemory]);
-		const triggerId = activeNode?.id;
-		console.log('trigger id: ', triggerId);
-		const res = await api.post(`/api/start-workflow/`, {node_id: id, trigger_id: triggerId, input: chatInput});
-		console.log(res.data);
-	}
-
-	const handleUpdateFiles = async (nodeId: string) => {
-		const node = agents.find((agent) => agent.id === nodeId) || null;
-		if (!node) {
-			return;
-		}
-		const res = await api.get(`/api/${nodeId}/files/`);
-		const files: FileType[] = res.data.map((file: FileResponse) => ({
-			id: file.id,
-			extension: file.file.split('.').pop(),
-			name: file.file.replace(/^.*[\\/]/, ''),
-			date: file.date
-		}));
-		const prop = node.data.properties as DocumentLoaderProperties;
-		prop.files.push(...files);
-		node.data.properties.files = prop.files;
-	}
-
-	return (
-  <div className="h-screen overflow-hidden flex flex-col bg-gray-900 text-gray-100">
-    {/* Navbar */}
-    <header className="h-16 p-4 flex justify-between items-center border-b border-gray-700">
-      <a href="/">
-        <h1 className="text-2xl">AI Workflow Automation</h1>
-      </a>
-      <div className="flex space-x-10">
-        <a className="text-lg" href="/profile">Profile</a>
-        <a className="text-lg" href="/logout">Logout</a>
-      </div>
-    </header>
-
-    {/* Remaining space divided into 2 rows (equal height) & 2 columns */}
-    <div className="flex-1 grid grid-rows-2 grid-cols-[75%_25%]">
-      
-      {/* Top Left: ReactFlow Component */}
-      <div className="border border-gray-700 p-2">
-        <ReactFlow
-		  nodes={agents}
-		  edges={edges}
-		  nodeTypes={nodeTypes}
-		  edgeTypes={edgeTypes}
-		  onNodesChange={onAgentsChange}
-		  onEdgesChange={onEdgesChange}
-		  onConnect={onConnect}
-		  fitView
-		>
-		  <Controls
-		    showZoom
-		    showFitView
-		    showInteractive={false}
-		    position="bottom-left"
-		    style={{
-		      flexDirection: "row",
-		      gap: "8px",
-		      backgroundColor: "transparent",
-		      padding: "8px",
-		      borderRadius: "8px",
-		    }}
-		  />
-		  <Background gap={12} size={1} />
-		</ReactFlow>
-
-      </div>
-      
-      {/* Top Right: Console */}
-      <div className="border border-gray-700 bg-gray-800 text-gray-100 p-4 overflow-y-auto">
-        {/* Insert dynamic console logs here */}
-        <p>Console output will appear here...</p>
-      </div>
-      
-      {/* Bottom Left: Chat Window */}
-      <div className="border border-gray-700 flex flex-col">
-        {/* Chat Messages Area */}
-        <div className="flex-1 p-4 overflow-y-auto">
-          <h1 className="text-2xl mb-2">Chat</h1>
-          {activeNode && (
-            <div className="text-sm text-gray-400 mb-4">
-              Session {activeNode.id}
-            </div>
-          )}
-          {memories?.map((memory: MemoryItem, index) => {
-            const lastContent = memory.content[memory.content.length - 1]?.text;
-            return (
-              <div key={index} className="mb-4">
-                {memory.role === 'user' && (
-                  <div className="flex justify-start">
-                    <div className="w-[40%] bg-gray-800 text-gray-100 p-4 rounded-xl">
-                      {lastContent}
-                    </div>
-                  </div>
-                )}
-                {memory.role === 'assistant' && (
-                  <div className="flex justify-end">
-                    <div className="w-[40%] bg-gray-700 text-gray-100 p-4 rounded-xl">
-                      {lastContent}
-                    </div>
-                  </div>
-                )}
-              </div>
+        if (!isCircular(source, target, edges) && isValid(sourceHandle, targetHandle)) {
+            const newEdgeId = uuidv4();
+            setEdges((prevEdges) =>
+                addEdge({
+                        ...params,
+                        id: newEdgeId,
+                        animated: true,
+                        style: { stroke: '#f6ab6c', strokeDasharray: '5,5' },
+                    },
+                    prevEdges
+                )
             );
-          })}
-        </div>
-        {/* Chat Input */}
-        <div className="p-4 border-t border-gray-700">
-          <form onSubmit={handleSubmitChat}>
-            <input
-              type="text"
-              className="border border-gray-600 rounded-lg p-2 w-full bg-gray-800 text-gray-100"
-              value={chatInput}
-              onChange={handleUpdateChatInput}
-              placeholder="Type your message..."
-            />
-          </form>
-        </div>
-      </div>
-      
-      {/* Bottom Right: File Upload */}
-      <div className="border border-gray-700 p-4">
-        <div className="border-2 border-dashed border-gray-600 h-full flex items-center justify-center relative bg-gray-800">
-          <p className="mb-2 text-center">Drag and drop files here or click to upload</p>
-          <input
-            type="file"
-            multiple
-            className="absolute w-full h-full opacity-0 cursor-pointer"
+            const sourceAgent = agents.find(agent => agent.id === source);
+            const targetAgent = agents.find(agent => agent.id === target);
+
+            let connectionType = 'next';
+
+            if (sourceAgent && targetAgent) {
+                // Determine the connection type based on target agent type.
+                if (targetAgent.type === 'memory') {
+                    connectionType = 'memory';
+                } else if (targetAgent.type === 'chatModel') {
+                    connectionType = 'chat_model';
+                } else if (targetAgent.type === 'vectorStore') {
+                    if (targetHandle?.split("-")[0] === 'main') {
+                        connectionType = 'next'
+                    } else if (targetHandle?.split("-")[0] === 'retriever') {
+                        connectionType = 'retriever';
+                    }
+                } else {
+                    connectionType = 'next';
+                }
+
+                // Create the payload according to the serializer's expected fields.
+                const payload = {
+                    connection_type: connectionType,
+                    source: sourceAgent.id, // ensure this is the agent's unique identifier
+                    target: targetAgent.id, // ensure this is the agent's unique identifier
+                };
+
+                // Send the payload to the connection creation endpoint.
+                const res = await api.post('/api/connection/create/', payload);
+
+                const connectionData = res.data as ConnectionResponse;
+
+                switch (connectionData.connection_type) {
+                    case "chat_model":
+                        sourceAgent.data.chat_model_node = connectionData.target;
+                        break;
+                    case "memory":
+                        sourceAgent.data.memory_node = connectionData.target;
+                        break;
+                    case "retriever":
+                        sourceAgent.data.retriever_node = connectionData.target;
+                        break;
+                    default:
+                        sourceAgent.data.next_agents?.push(connectionData.target);
+                }
+            }
+        } else {
+            alert('Circular connection is not allowed!');
+        }
+    }, [agents, edges, setEdges]);
+
+    const handleOpenSidebar = () => {
+        setShowSidebar(true);
+    };
+
+    const handleSearchAgents = (e: ChangeEvent < HTMLInputElement > ) => {
+        setQueryText(e.target.value);
+    };
+
+    const handleAddAgent = async (key: number) => {
+        console.log(key);
+        const foundAgent = nodeLabels.find((agent) => agent.key === key);
+        console.log(foundAgent);
+        if (!foundAgent) return;
+
+        const agentType = foundAgent.name;
+        const slug = uuidv4();
+
+        let newAgentData: AgentData;
+
+        if (agentType === 'documentLoader') {
+            newAgentData = {
+                slug: slug,
+                type: 'documentLoader',
+                workflow: id,
+                next_agents: [],
+                properties: {
+                    files: [],
+                    embedding_model: 'text-embedding-ada-002',
+                    position_x: 0,
+                    position_y: 0,
+                },
+                onDelete: handleDeleteNode,
+                status: 'pending',
+                flowType: 'trigger',
+                onRun: handleRunDocumentLoaderNode,
+                onFilesUpdate: handleUpdateFiles
+            };
+        } else if (agentType === 'chat') {
+            newAgentData = {
+                slug: slug,
+                type: 'chat',
+                workflow: id,
+                next_agents: [],
+                properties: {
+                    generation_model: 'gpt-4o',
+                    temperature: 0.5,
+                    context: '',
+                    prompt: '',
+                    position_x: 0,
+                    position_y: 0,
+                },
+                status: 'pending',
+                onDelete: handleDeleteNode,
+                flowType: 'main'
+            };
+        } else if (agentType === 'chatTrigger') {
+            newAgentData = {
+                slug: slug,
+                type: 'chatTrigger',
+                workflow: id,
+                next_agents: [],
+                onOpenChat: handleOpenChat,
+                properties: {
+                    position_x: 0,
+                    position_y: 0,
+                    memories: []
+                },
+                status: 'pending',
+                onDelete: handleDeleteNode,
+                flowType: 'trigger'
+            }
+        } else if (agentType === 'memory') {
+            newAgentData = {
+                slug: slug,
+                type: 'memory',
+                workflow: id,
+                next_agents: [],
+                properties: {
+                    position_x: 0,
+                    position_y: 0,
+                    memories: []
+                },
+                status: 'pending',
+                onDelete: handleDeleteNode,
+                flowType: 'sub'
+            }
+        } else if (agentType === 'vectorStore') {
+            newAgentData = {
+                slug: slug,
+                type: 'vectorStore',
+                workflow: id,
+                next_agents: [],
+                properties: {
+                    position_x: 0,
+                    position_y: 0,
+                },
+                status: 'pending',
+                onDelete: handleDeleteNode,
+                flowType: 'tool'
+            }
+        } else if (agentType === 'chatModel') {
+            newAgentData = {
+                slug: slug,
+                type: 'chatModel',
+                workflow: id,
+                next_agents: [],
+                properties: {
+                    position_x: 0,
+                    position_y: 0,
+                    service: 'openai',
+                    model: 'gpt-4o'
+                },
+                status: 'pending',
+                onDelete: handleDeleteNode,
+                flowType: 'sub'
+            }
+        } else {
+            return;
+        }
+
+        const newNode: AgentNode = {
+            id: slug,
+            type: newAgentData.type,
+            data: newAgentData,
+            position: { x: 0, y: 0 },
+        };
+
+        setAgents((prevAgents) => [...prevAgents, newNode]);
+
+        const res = await api.post(`/api/agent/create/`, newAgentData);
+        console.log(res.data);
+    };
+
+    const handleUpdateChatInput = (e: ChangeEvent < HTMLInputElement > ) => {
+        setChatInput(e.target.value);
+    }
+
+    const handleSubmitChat = async (e: FormEvent < HTMLFormElement > ) => {
+        e.preventDefault();
+        if (!activeNode) {
+            return;
+        }
+        const memID = uuidv4();
+        const newMemory: ChatMemory = {
+            id: memID,
+            input: chatInput,
+            agent: activeNode.id
+        };
+
+        setChatInput('');
+
+        // node.data.properties.memories?.push(newMemory);
+        setMemories((prevMemories) => [...prevMemories, newMemory]);
+        if (chatInput.trim()) {
+            const triggerId = activeNode?.id;
+            const res = await api.post(`/api/start-workflow/`, { node_id: id, trigger_id: triggerId, input: newMemory });
+            const modifiedMemory: ChatMemory = res.data.new_memory;
+            setMemories((prevMemories) =>
+                prevMemories.map((memory) =>
+                    memory.id === modifiedMemory.id ? modifiedMemory : memory
+                )
+            );
+        }
+    }
+
+    const handleSubmitDocuments = async (e: ChangeEvent<HTMLInputElement>) => {
+        e.preventDefault();
+        if (!activeDocumentLoader) {
+            return;
+        }
+        activeDocumentLoader.data.onRun(activeDocumentLoader.id);
+        setSelectedFiles([]);
+    }
+
+    const handleUpdateFiles = async (nodeId: string) => {
+        const node = agents.find((agent) => agent.id === nodeId) || null;
+        if (!node) {
+            return;
+        }
+        const res = await api.get(`/api/${nodeId}/files/`);
+        const files: FileType[] = res.data.map((file: FileResponse) => ({
+            id: file.id,
+            extension: file.file.split('.').pop(),
+            name: file.file.replace(/^.*[\\/]/, ''),
+            date: file.date
+        }));
+        const prop = node.data.properties as DocumentLoaderProperties;
+        prop.files.push(...files);
+        node.data.properties.files = prop.files;
+    }
+
+
+    return (
+        <div className= "h-screen overflow-hidden flex flex-col bg-gray-900 text-gray-100" >
+        {/* Navbar (unchanged) */ }
+        <header className = "h-16 p-4 flex justify-between items-center border-b border-gray-700" >
+            <a href="/" >
+                <h1 className="text-2xl">AI Workflow Automation</h1>
+                    </a>
+                    <div className="flex space-x-10">
+                        <a className="text-lg" href = "/profile" > Profile </a>
+                            <a className="text-lg" href="/logout">
+                            Logout
+                            </a>
+                    </div>
+        </header>
+
+        { /* Main content area */ }
+        <div className="flex-1 min-h-0 grid grid-rows-2 grid-cols-[70%_30%] overflow-hidden" >
+        {/* Top Left: ReactFlow Component */ }
+        < div className = "border border-gray-700 p-2 overflow-hidden" >
+            <ReactFlow 
+          nodes={ agents }
+    edges = { edges }
+    nodeTypes = { nodeTypes }
+    edgeTypes = { edgeTypes }
+    onNodesChange = { onAgentsChange }
+    onEdgesChange = { onEdgesChange }
+    onConnect = { onConnect }
+    fitView
+    className = "h-full w-full"
+        >
+        <Controls
+            showZoom
+    showFitView
+    showInteractive = { false}
+    position = "bottom-left"
+    style = {{
+        flexDirection: "row",
+            gap: "8px",
+                backgroundColor: "transparent",
+                    padding: "8px",
+                        borderRadius: "8px",
+            }
+}
           />
+    < Background gap = { 12} size = { 1} />
+        </ReactFlow>
         </div>
-      </div>
-      
-    </div>
-    
-    {/* Optional Run button overlay */}
-    <button
-      className="absolute top-4 right-4 z-50 rounded-md border border-gray-600 p-2 hover:bg-gray-700 hover:text-white"
+
+        { /* Top Right: Console */ }
+        <div className="border border-gray-700 bg-gray-800 text-gray-100 flex flex-col h-full" >
+    <h1 className="text-2xl text-center p-4 bg-gray-700" > Logs </h1>
+        < div 
+ref = { logsContainerRef }
+className = "p-4 overflow-y-auto flex-1 min-h-0"
     >
-      Run
-    </button>
-  </div>
-);
+{
+    logs.map((log: Log, index) => (
+        <div 
+                key= { index }
+                className = {`text-sm mb-2 ${log.type === 'error' ? 'text-red-400' :
+            log.type === 'warning' ? 'text-yellow-400' : 'text-gray-300'
+            }`}
+    >
+    [{ new Date().toLocaleTimeString() }] { log.message }
+</div>
+            ))}
+</div> <
+        /div>
+
+        { /* Bottom Left: Chat Window */ }
+        <div className="border border-gray-700 flex flex-col min-h-0" >
+    {/* Chat Messages Area */ }
+    < div 
+ref = { chatContainerRef }
+className = "flex-1 overflow-y-auto min-h-0 p-4"
+    >
+    <h1 className="text-2xl text-center p-4 bg-gray-700 sticky top-0 rounded-lg" > Chat </h1>
+{
+    activeNode && (
+        <div className="text-sm text-gray-400 mb-4 text-center" >
+            { activeNode.id }
+            </div>
+            )
+}
+{
+    memories?.map((memory: ChatMemory, index) => {
+        return (
+            <div key= { index } className = "mb-4" >
+            {
+                memory.input && (
+                    <div className="flex justify-start">
+                        <div className="w-[40%] bg-gray-800 text-gray-100 p-4 rounded-xl">
+                            { memory.input }
+                            </div>
+                            </div>
+                  )
+}
+{
+    memory.output && (
+        <div className="flex justify-end" >
+            <div className="w-[40%] bg-gray-700 text-gray-100 p-4 rounded-xl" >
+                { memory.output }
+                </div>
+                </div>
+                  )
+}
+</div>
+              );
+            })}
+</div>
+
+        { /* Chat Input (unchanged) */ }
+        <div className="p-4 border-t border-gray-700" >
+    <form onSubmit={ handleSubmitChat }>
+        <textarea
+              ref={ textareaRef }
+className = "border border-gray-600 rounded-lg p-2 w-full bg-gray-800 text-gray-100 resize-none overflow-y-auto"
+value = { chatInput }
+onChange = { handleUpdateChatInput }
+onKeyDown = { handleKeyDown }
+placeholder = "Type your message... (Ctrl + Enter for new line)"
+rows = { 1}
+style = {{
+    minHeight: '2.5rem',
+        maxHeight: '10rem',
+              }}
+            />
+    </form>
+    </div> <
+        /div>
+
+        { /* Bottom Right: File Upload */ }
+        <div className="flex flex-col justify-between w-full min-h-0 h-full" >
+    <div className="p-4 w-full" >
+        <h1 className="text-2xl p-4 bg-gray-700 text-center rounded-lg sticky top-0" > retrieval </h1>
+{
+    activeDocumentLoader && (
+        <div className="text-sm text-gray-400 mb-4 text-center" >
+            { activeDocumentLoader.id }
+            </div>
+    )
+}
+<div className="w-full h-48 mt-8 border-1 rounded-lg" >
+    <label htmlFor="dropzone-file" className = "flex flex-col items-center justify-center w-full h-full border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 dark:hover:bg-gray-800 dark:bg-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:hover:border-gray-500 dark:hover:bg-gray-600" >
+        <div class="flex flex-col items-center justify-center pt-5 pb-6" >
+            <svg class="w-8 h-8 mb-4 text-gray-500 dark:text-gray-400" aria-hidden="true" xmlns = "http://www.w3.org/2000/svg" fill = "none" viewBox = "0 0 20 16" >
+                <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d = "M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2" />
+                    </svg>
+                    < p class="mb-2 text-sm text-gray-500 dark:text-gray-400" > <span class="font-semibold" > Click to upload < /span> or drag and drop</p >
+                        <p class="text-xs text-gray-500 dark:text-gray-400" > PDF, DOCX, MD, TXT, JSON </p>
+                            </div>
+                            <input id="dropzone-file" type="file" class="hidden" value={selectedFiles} onChange={handleSubmitDocuments} />
+                                </label>
+                                </div>
+                                </div>
+  
+{/* Sticky buttons container */ }
+<div className="sticky bottom-0 p-4 mt-auto space-y-4" >
+    <button className="p-4 bg-amber-600 rounded-md w-full hover:bg-amber-700 transition-colors" >
+        Reset Memory
+            </button>
+            < button className = "p-4 bg-amber-600 rounded-md w-full hover:bg-amber-700 transition-colors" >
+                Reset Documents
+                    </button>
+                    </div>
+                    </div> <
+        /div> < /
+        div >
+    );
 
 
 
 };
 
 const FlowProvider: React.FC = () => (
-	<ReactFlowProvider>
-	<Workflow/>
-	</ReactFlowProvider>
-	);
+    <ReactFlowProvider>
+    <Workflow/>
+    </ReactFlowProvider>
+);
 
 export default FlowProvider;

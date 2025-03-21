@@ -166,8 +166,8 @@ class WorkflowStartView(APIView):
         chat_input = request.data.get('input')
 
         # Dispatch to Celery
-        outputs = process_workflow(node_id, trigger_id, chat_input)
-        return Response({"status": "Workflow started", "outputs": outputs})
+        new_memory = process_workflow(node_id, trigger_id, chat_input)
+        return Response({"status": "Workflow started", "new_memory": new_memory})
 
 
 

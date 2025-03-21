@@ -80,13 +80,24 @@ class NodeConnectionNestedSerializer(serializers.ModelSerializer):
         fields = ['target', 'connection_type']
 
 
+class MemorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Memory
+        fields = ('id', 'input', 'output', 'agent')
+
+    def create(self, validated_data):
+        memory = Memory.objects.create(**validated_data)
+        return memory
+
+
 class AgentSerializer(serializers.ModelSerializer):
     # Use the nested serializer to return only target and connection_type.
     connections_out = NodeConnectionNestedSerializer(many=True, read_only=True)
+    memories = MemorySerializer(many=True, read_only=True)
 
     class Meta:
         model = Agent
-        fields = ('id', 'slug', 'type', 'properties', 'workflow', 'connections_out')
+        fields = ('id', 'slug', 'type', 'properties', 'workflow', 'connections_out', 'memories')
 
     def create(self, validated_data):
         slug = validated_data.get('slug')
@@ -116,12 +127,3 @@ class DocumentSerializer(serializers.ModelSerializer):
             defaults=validated_data
         )
         return document
-
-class MemorySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Memory
-        fields = ('id', 'input', 'output', 'workflow')
-
-    def create(self, validated_data):
-        memory = Memory.objects.create(**validated_data)
-        return memory

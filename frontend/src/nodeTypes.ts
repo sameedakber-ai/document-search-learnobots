@@ -80,7 +80,7 @@ export interface AskAIProperties {
 export interface ChatTriggerProperties {
     position_x: number;
     position_y: number;
-    memories?: MemoryItem[];
+    memories: MemoryItem[];
 }
 
 export interface VectorStoreProperties {

@@ -11,7 +11,7 @@ from openai import OpenAI, AsyncOpenAI
 from pydantic import BaseModel
 import openai
 
-from .models import Agent, Workflow, Document
+from .models import Agent, Workflow, Document, Memory
 
 from django.db.models import F, Value, FloatField
 from django.db.models import Func
@@ -65,6 +65,13 @@ class Element(BaseModel):
 
 class ElementList(BaseModel):
     output: List[Element]
+
+class ChatMemory(BaseModel):
+    id: str
+    input: str
+    output: str
+    agent: str
+
 
 
 
@@ -171,7 +178,7 @@ class DocumentLoader:
 
         try:
             document = TextLoader(file_path, encoding="UTF-8").load()[0].page_content
-        except RuntimeError or UnicodeDecodeError or FileNotFoundError or ValueError as e:
+        except Exception as e:
             logger.error("Markfown loading failed: %s", e)
             return []
 
@@ -200,7 +207,6 @@ class DocumentLoader:
             for text_split in text_splitter.split_documents([md_header_split]):
                 text_splits.append(text_split.page_content)
                 text_split_sections.append(md_header_split_section)
-        print(f"\n\n\n{text_splits}\n\n\n")
 
         return [
             Element(
@@ -365,16 +371,21 @@ def safe_json_loads(data: Union[str, list]) -> list:
     return data
 
 
-def remove_file(file_path: str) -> None:
+def remove_file(file) -> None:
     """
     Remove a file from the filesystem if it exists.
     """
-    if os.path.exists(file_path):
-        try:
-            os.remove(file_path)
-        except OSError as e:
-            logger.exception("Error removing file %s: %s", file_path, e)
-    else:
+    try:
+        file_path = f"media/{str(file.file)}"
+        file.delete()
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except OSError as e:
+                logger.exception("Error removing file %s: %s", file_path, e)
+        else:
+            logger.warning("File %s does not exist", file_path)
+    except ObjectDoesNotExist:
         logger.warning("File %s does not exist", file_path)
 
 
@@ -395,7 +406,7 @@ def process_trigger_document_loader(trigger_node, channel_layer, group_name) -> 
             logger.exception("Error loading document for file %s", str(file.file))
         # Remove file using a robust approach.
         file_path = os.path.join('media', str(file.file))
-        remove_file(file_path)
+        remove_file(file)
     return ElementList(output=[element.model_dump() for element in texts])
 
 
@@ -473,7 +484,7 @@ def process_chat_agent(current_agent, agent_input: Union[ChatTriggerEvent, ChatE
     if memory_conn:
         memory_agent = memory_conn.target
         mem_raw = memory_agent.properties.get('memories', '[]')
-        chat_memory = safe_json_loads(mem_raw)
+        chat_memory = safe_json_loads(mem_raw)[:5]
 
     # Build the conversation messages.
     messages = [{
@@ -658,7 +669,7 @@ def process_agent(current_agent, agent_input: Union[ChatTriggerEvent, ChatEvent,
 
 
 @shared_task(bind=True)
-def process_workflow(self, node_id: str, trigger_id: str, input_text: str) -> List[str]:
+def process_workflow(self, node_id: str, trigger_id: str, new_memory: ChatMemory = None) -> ChatMemory:
     """
     Process the workflow by traversing agents starting at the trigger node.
     Returns a list of final outputs.
@@ -685,6 +696,7 @@ def process_workflow(self, node_id: str, trigger_id: str, input_text: str) -> Li
 
         # Prepare the initial input based on trigger type.
         if trigger_node.type == 'chatTrigger':
+            input_text = new_memory['input']
             initial_input = ChatTriggerEvent(output=input_text)
         elif trigger_node.type == 'documentLoader':
             initial_input = process_trigger_document_loader(trigger_node, channel_layer, group_name)
@@ -701,5 +713,9 @@ def process_workflow(self, node_id: str, trigger_id: str, input_text: str) -> Li
         return []
     else:
         update_status(channel_layer, group_name, None, 'info', "Workflow completed.")
-        print(outputs)
-        return outputs
+        if trigger_node.type == 'chatTrigger':
+            final_output = "\n".join(output for output in outputs if output)
+            Memory.objects.create(input=new_memory['input'], output=final_output, slug=new_memory['id'], agent=Agent.objects.get(slug=trigger_id))
+            new_memory['output'] = final_output
+            return new_memory
+        return []

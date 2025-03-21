@@ -8,3 +8,11 @@
   border-radius: 6px !important;
   border: 2px solid #ffffff !important;
 }
+
+.overflow-y-auto {
+  scroll-behavior: smooth;
+}
+
+textarea {
+  line-height: 1.25rem; /* Match this with your design system */
+}

@@ -53,6 +53,15 @@ function Home() {
     return (
   <div id="home-id" className="h-screen flex flex-col">
     {/* Header */}
+    <div className="p-4 flex justify-between items-center border-b border-gray-400">
+      <a href="/">
+        <h1 className="text-2xl">AI Workflow Automation</h1>
+      </a>
+      <div className="flex space-x-10">
+        <a className="text-lg" href="/profile">Profile</a>
+        <a className="text-lg" href="/logout">Logout</a>
+      </div>
+    </div>
 
     {/* Main content area */}
     <div className="flex-1 bg-gray-50 flex flex-col">

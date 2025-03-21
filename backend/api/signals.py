@@ -1,27 +1,55 @@
 from django.db.models.signals import post_save, post_init, pre_save
+from django.db import transaction
 from django.dispatch import receiver
+from django.contrib.auth.models import User
+from api.models import Workflow, Agent, NodeConnection
 
-from api.models import Agent
 
-
-@receiver(pre_save, sender=Agent)
-def check_memories_update(sender, instance, **kwargs):
-    # Only process 'chatTrigger' agents
-    if instance.type != 'chatTrigger':
+@receiver(post_save, sender=User)
+def create_default_workflow_and_agents(sender, instance, created, **kwargs):
+    if not created:
         return
 
-    try:
-        # Retrieve previous state of the instance
-        previous_instance = Agent.objects.get(pk=instance.pk)
-        previous_memories = previous_instance.properties.get('memories', [])
-    except Agent.DoesNotExist:
-        # If instance doesn't exist, it's a new creation, so do nothing
-        return
+    with transaction.atomic():
+        # 1. Create a default workflow for the new user.
+        workflow = Workflow.objects.create(owner=instance, name='default')
 
-    # Get current memories field
-    current_memories = instance.properties.get('memories', [])
+        # 2. Create 6 agents, one for each type.
+        agent_types = ['documentLoader', 'chat', 'chatTrigger', 'memory', 'chatModel', 'vectorStore']
+        agents = {}
+        for agent_type in agent_types:
+            # Create each agent with the workflow reference.
+            agent = Agent.objects.create(workflow=workflow, type=agent_type)
+            agents[agent_type] = agent
 
-    # Check if memories have been updated (appended to)
-    if len(current_memories) > len(previous_memories):
-        # Send signal
-        print("Memories field has been updated.")  # Replace with actual signal action
+        # 3. Create the node connections for the new agents:
+        #    a. chatTrigger to chat (next connection)
+        NodeConnection.objects.create(
+            source=agents['chatTrigger'],
+            target=agents['chat'],
+            connection_type='next'
+        )
+        #    b. chat to memory (memory connection)
+        NodeConnection.objects.create(
+            source=agents['chat'],
+            target=agents['memory'],
+            connection_type='memory'
+        )
+        #    c. chat to chatModel (chat_model connection)
+        NodeConnection.objects.create(
+            source=agents['chat'],
+            target=agents['chatModel'],
+            connection_type='chat_model'
+        )
+        #    d. chat to vectorStore (retriever connection)
+        NodeConnection.objects.create(
+            source=agents['chat'],
+            target=agents['vectorStore'],
+            connection_type='retriever'
+        )
+        #    e. documentLoader to vectorStore (next connection)
+        NodeConnection.objects.create(
+            source=agents['documentLoader'],
+            target=agents['vectorStore'],
+            connection_type='next'
+        )
