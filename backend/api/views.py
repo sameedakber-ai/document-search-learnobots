@@ -3,14 +3,12 @@ import json
 from django.shortcuts import render
 from django.contrib.auth.models import User
 
-from .helpers import Neo4jNodes
-from .models import Document, Workflow, Agent, Memory
+from .models import Workflow, Agent
 
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import status
-from celery.result import AsyncResult
 
 from .serializers import UserSerializer, DocumentSerializer, FileSerializer, WorkflowSerializer, \
     AgentSerializer, MemorySerializer, NodeConnectionSerializer
@@ -62,7 +60,7 @@ class WorkflowListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        workflows = Workflow.objects.all()
+        workflows = Workflow.objects.filter(owner = request.user).all()
 
         serializer = WorkflowSerializer(workflows, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)

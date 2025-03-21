@@ -6,12 +6,11 @@ import BaseNode from "./BaseNode";
 export type ChatTriggerNodeProps = NodeProps<AgentNode<"chatTrigger">>;
 
 const ChatTriggerNode: FC<ChatTriggerNodeProps> = (props) => {
-    const { id, data } = props;
+    const { id } = props;
     return (
         <BaseNode {...props} classNames='rounded-l-2xl p-4'>
             <div
                 className="z-50 absolute -left-5 top-5"
-                onClick={() => data.onOpenChat(id)}
             >
                 <svg
                     xmlns="http://www.w3.org/2000/svg"

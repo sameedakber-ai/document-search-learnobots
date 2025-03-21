@@ -1,5 +1,4 @@
 from django.apps import AppConfig
-from backend.utils.neo4j import driver
 
 
 class ApiConfig(AppConfig):
@@ -8,5 +7,4 @@ class ApiConfig(AppConfig):
 
     def ready(self):
         import atexit
-        atexit.register(driver.close)
         import api.signals

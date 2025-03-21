@@ -11,7 +11,7 @@ from channels.layers import get_channel_layer
 import time
 from pathlib import Path
 
-from openai import OpenAI, AsyncOpenAI
+from openai import OpenAI
 from pydantic import BaseModel
 import openai
 
@@ -27,17 +27,16 @@ import logging
 from typing import Any, Dict, List, Set, Union, Optional, TypedDict
 
 from asgiref.sync import async_to_sync
-from celery import shared_task, Task
+from celery import shared_task
 from channels.layers import get_channel_layer
 
 from functools import wraps
 import concurrent.futures
 
 import os
-import shutil
 import tempfile
 
-from langchain_community.document_loaders import TextLoader, PyPDFLoader
+from langchain_community.document_loaders import TextLoader, PyPDFLoader, Docx2txtLoader
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 logger = logging.getLogger(__name__)
@@ -162,9 +161,11 @@ class DocumentLoader:
             loaded_documents = self.load_text(self.file_path)
         elif ext == 'pdf':
             loaded_documents = self.load_pdf(self.file_path)
+        elif ext == 'docx':
+            loaded_documents = self.load_docx(self.file_path)
         else:
             logger.error("Unsupported file extension: %s", ext)
-            # Optionally, raise an exception here.
+            return []
         return loaded_documents
 
     def load_markdown(self, file_path):
@@ -247,6 +248,27 @@ class DocumentLoader:
         except RuntimeError or UnicodeDecodeError or FileNotFoundError or ValueError:
             return []
 
+        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+            model_name=os.getenv('OPENAI_EMBEDDING_MODEL'), chunk_size=1500, chunk_overlap=0,
+        )
+
+        return [
+            Element(
+                type='text',
+                text=split,
+                metadata={
+                    'source': Path(file_path).name,
+                    'uid': hashlib.sha256(str.encode(split)).hexdigest()
+                }
+            ) for i, split in enumerate(text_splitter.split_text(document))
+        ]
+    
+    def load_docx(self, file_path):
+        try:
+            document = Docx2txtLoader(file_path).load()[0].page_content
+        except RuntimeError or UnicodeDecodeError or FileNotFoundError or ValueError:
+            return []
+        
         text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
             model_name=os.getenv('OPENAI_EMBEDDING_MODEL'), chunk_size=1500, chunk_overlap=0,
         )
@@ -354,6 +376,39 @@ def load_document(file):
     If the loading takes longer than 60 seconds, a TimeoutWorkflowException will be raised.
     """
     return DocumentLoader(file).load()
+
+def refine_prompt_using_chat_history(query: str, chat_history: List[MemoryItem]) -> str:
+    refine_prompt = (
+        "Given the conversation history and latest query, generate a concise search query focusing on key terms:"
+    )
+    
+    # Build a string from chat history. Adjust indexing if your structure differs.
+    chat_history_str = "\n\n".join([
+        f'role: {message["role"]}\nmessage: {message["content"][0]["text"]}'
+        for message in chat_history if message["role"] != "system"
+    ])
+    
+    # Build the full prompt to send to OpenAI
+    full_prompt = (
+        f"{refine_prompt}\n\n"
+        f"Conversation History:\n{chat_history_str}\n\n"
+        f"Latest Query: {query}\n\n"
+        f"Refined Search Query:"
+    )
+    
+    # Call OpenAI's ChatCompletion API. Adjust model, temperature, and max_tokens as needed.
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are an assistant that refines search queries based on conversation context."},
+            {"role": "user", "content": full_prompt}
+        ],
+        temperature=0.2,
+    )
+    
+    refined_query = response.choices[0].message.content.strip()
+    return refined_query
+    
 
 def send_update(
         channel_layer: Any,
@@ -540,14 +595,27 @@ def process_chat_agent(current_agent, agent_input: Union[ChatTriggerEvent, ChatE
         }]
     }]
     messages.extend(chat_memory)
+    update_status(channel_layer, group_name, str(chat_model_agent.slug), 'running',
+                      f"{chat_model_agent.type} in progress...")
+    refined_user_query = agent_input.output
+    try:
+        refined_user_query = refine_prompt_using_chat_history(chat_history=messages, query=agent_input.output)
+    except Exception as e:
+        update_status(channel_layer, group_name, str(chat_model_agent.slug), 'failed',
+                      f"{chat_model_agent.type} failed.")
+        logger.error("Could not refine user input: %s", e)
+        
     messages.append({
         "role": "user",
         "content": [{
             "type": "text",
-            "text": agent_input.output
+            "text": refined_user_query
         }]
     })
+
     original_user_message = agent_input.output
+
+    chat_data = None
 
     # Process retriever connection if available.
     retriever_conn = current_agent.connections_out.filter(connection_type='retriever').first()
@@ -555,13 +623,10 @@ def process_chat_agent(current_agent, agent_input: Union[ChatTriggerEvent, ChatE
         retriever_node = retriever_conn.target
         update_status(channel_layer, group_name, str(retriever_node.slug), 'running',
                       f"{retriever_node.type} in progress...")
+        
         documents = retriever_node.documents.all()
         if documents:
-            # Optionally include history.
-            history = "\n\n".join([
-                f'role: {message["role"]}\nmessage: {message["content"][0]["text"]}'
-                for message in messages
-            ])
+
             response = client.beta.chat.completions.parse(
                 model=os.getenv('OPENAI_CHAT_MODEL'),
                 messages=messages,
@@ -600,36 +665,47 @@ def process_chat_agent(current_agent, agent_input: Union[ChatTriggerEvent, ChatE
                     tools=tools,
                     response_format=ChatEvent
                 )
-                final_content = response_2.choices[0].message.content.strip()
-                logger.info("Final content from tool call: %s", final_content)
+                raw_content = response_2.choices[0].message.content.strip()
+                if raw_content.startswith("```json") and raw_content.endswith("```"):
+                    raw_content = raw_content[7:-3].strip()
+                try:
+                    data_dict = json.loads(raw_content)
+                    chat_data = ChatEvent(**data_dict)
+                except Exception:
+                    logger.exception("Error parsing chat response: %s", raw_content)
+                    raise WorkflowException("Failed to parse chat response.")
+                
+                logger.info("Final content from tool call: %s", raw_content)
         update_status(channel_layer, group_name, str(retriever_node.slug), 'completed',
                       f"{retriever_node.type} completed.")
 
-    # Call the chat model.
-    try:
-        response = client.beta.chat.completions.parse(
-            model=os.getenv('OPENAI_CHAT_MODEL'),
-            messages=messages,
-            response_format=ChatEvent
-        )
-    except Exception as e:
-        update_status(channel_layer, group_name, str(chat_model_agent.slug), 'failed',
-                      f"{chat_model_agent.type} failed.")
-        raise WorkflowException("Chat model API call failed.")
+    if not chat_data:
+        update_status(channel_layer, group_name, str(chat_model_agent.slug), 'running',
+                      f"{chat_model_agent.type} in progress...")
+        try:
+            response = client.beta.chat.completions.parse(
+                model=os.getenv('OPENAI_CHAT_MODEL'),
+                messages=messages,
+                response_format=ChatEvent
+            )
+        except Exception as e:
+            update_status(channel_layer, group_name, str(chat_model_agent.slug), 'failed',
+                        f"{chat_model_agent.type} failed.")
+            raise WorkflowException("Chat model API call failed.")
 
-    raw_content = response.choices[0].message.content.strip()
-    if raw_content.startswith("```json") and raw_content.endswith("```"):
-        raw_content = raw_content[7:-3].strip()
+        raw_content = response.choices[0].message.content.strip()
+        if raw_content.startswith("```json") and raw_content.endswith("```"):
+            raw_content = raw_content[7:-3].strip()
 
-    try:
-        data_dict = json.loads(raw_content)
-        chat_data = ChatEvent(**data_dict)
-    except Exception:
-        logger.exception("Error parsing chat response: %s", raw_content)
-        raise WorkflowException("Failed to parse chat response.")
+        try:
+            data_dict = json.loads(raw_content)
+            chat_data = ChatEvent(**data_dict)
+        except Exception:
+            logger.exception("Error parsing chat response: %s", raw_content)
+            raise WorkflowException("Failed to parse chat response.")
 
-    update_status(channel_layer, group_name, str(chat_model_agent.slug), 'completed',
-                  f"{chat_model_agent.type} completed.")
+        update_status(channel_layer, group_name, str(chat_model_agent.slug), 'completed',
+                    f"{chat_model_agent.type} completed.")
 
     # Update memory if connection is available.
     if memory_conn:

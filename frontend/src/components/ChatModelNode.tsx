@@ -7,7 +7,7 @@ import BaseNode from "./BaseNode";
 export type ChatModelNodeProps = NodeProps<AgentNode<"chatModel">>;
 
 const ChatModelNode: FC<ChatModelNodeProps> = (props) => {
-    const {id, data} = props;
+    const { id } = props;
     return (
         <BaseNode {...props} classNames="rounded-2xl p-4">
             <Handle
