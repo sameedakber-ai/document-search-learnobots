@@ -136,5 +136,5 @@ document-search is containerized using Docker. The deployment process is streaml
 1. **Clone the Repository:**
 
    ```bash
-   git clone https://github.com/yourusername/document-search.git
+   git clone https://github.com/sameedakber-ai/document-search-learnobots.git
    cd document-search
