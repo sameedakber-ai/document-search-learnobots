@@ -1,11 +1,15 @@
 import json
 import os
 from collections import deque
+import re
+
+from django.db import transaction
 
 from asgiref.sync import async_to_sync
 from celery import shared_task
 from channels.layers import get_channel_layer
 import time
+from pathlib import Path
 
 from openai import OpenAI, AsyncOpenAI
 from pydantic import BaseModel
@@ -16,6 +20,7 @@ from .models import Agent, Workflow, Document, Memory
 from django.db.models import F, Value, FloatField
 from django.db.models import Func
 from pgvector.django import CosineDistance
+import hashlib
 
 import json
 import logging
@@ -75,7 +80,7 @@ class ChatMemory(BaseModel):
 
 
 
-def get_similar_documents(query_embedding, threshold=0.70):
+def get_similar_documents(query_embedding, threshold=0.60):
     """
     Returns all Document objects whose cosine similarity with the given query_embedding
     is above the threshold.
@@ -103,7 +108,7 @@ def knowledge_base_search_tool(query: str) -> str:
     """
     embedding_response = client.embeddings.create(
         input=query,
-        model="text-embedding-ada-002"
+        model=os.getenv('OPENAI_EMBEDDING_MODEL')
     )
     query_embedding = embedding_response.data[0].embedding
 
@@ -141,26 +146,25 @@ tools = [
 
 class DocumentLoader:
 
-    def __init__(self, document):
-        self.file_path = f'media/{document.file}'
+    def __init__(self, file_path: str):
+        self.file_path = file_path
 
     @property
     def get_ext(self):
         return os.path.splitext(self.file_path)[1].lstrip('.').lower()
 
     def load(self):
-        path = self.file_path
         ext = self.get_ext
-
         loaded_documents = []
-
         if ext == 'md':
-            loaded_documents = self.load_markdown(path)
+            loaded_documents = self.load_markdown(self.file_path)
         elif ext == 'txt':
-            loaded_documents = self.load_text(path)
+            loaded_documents = self.load_text(self.file_path)
         elif ext == 'pdf':
-            loaded_documents = self.load_pdf(path)
-
+            loaded_documents = self.load_pdf(self.file_path)
+        else:
+            logger.error("Unsupported file extension: %s", ext)
+            # Optionally, raise an exception here.
         return loaded_documents
 
     def load_markdown(self, file_path):
@@ -168,56 +172,74 @@ class DocumentLoader:
             return f"# {match.group(1)}\n"
 
         def get_split_headers(split):
+            # Build a header section from the split metadata.
             section = ""
             for header in ['Header 1', 'Header 2', 'Header 3', 'Header 4']:
-                section += f'{split.metadata[header]}:' if header in split.metadata else ''
-            if section:
-                if section[-1] == ':':
-                    section = section[:-1]
+                if header in split.metadata:
+                    section += f"{split.metadata[header]}:"
+            # Remove trailing colon if it exists.
+            if section.endswith(':'):
+                section = section[:-1]
             return section
 
         try:
-            document = TextLoader(file_path, encoding="UTF-8").load()[0].page_content
+            document_obj = TextLoader(file_path, encoding="UTF-8").load()
+            if not document_obj:
+                logger.error("TextLoader returned no document for file: %s", file_path)
+                return []
+            document = document_obj[0].page_content
         except Exception as e:
-            logger.error("Markfown loading failed: %s", e)
+            logger.exception("Markdown loading failed for file %s: %s", file_path, e)
             return []
 
-        title_pattern = r'---\ntitle: (.*?)\n---'
-        document = re.sub(title_pattern, replace_title, document, flags=re.DOTALL)
+        try:
+            # Replace title metadata with a markdown header.
+            title_pattern = r'---\ntitle: (.*?)\n---'
+            document = re.sub(title_pattern, replace_title, document, flags=re.DOTALL)
 
-        headers_to_split_on = [
-            ("#", "Header 1"),
-            ('##', 'Header 2'),
-            ('###', 'Header 3'),
-            ('####', 'Header 4'),
-        ]
+            # Define headers to split on.
+            headers_to_split_on = [
+                ("#", "Header 1"),
+                ("##", "Header 2"),
+                ("###", "Header 3"),
+                ("####", "Header 4"),
+            ]
 
-        markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on, strip_headers=False)
-        md_header_splits = markdown_splitter.split_text(document)
+            # Split document into sections based on markdown headers.
+            markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on, strip_headers=False)
+            md_header_splits = markdown_splitter.split_text(document)
+            md_header_split_sections = [get_split_headers(split) for split in md_header_splits]
 
-        md_header_split_sections = [get_split_headers(md_header_split) for md_header_split in md_header_splits]
-
-        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            model_name=OPENAI_EMBEDDING_MODEL, chunk_size=1500, chunk_overlap=0,
-        )
-
-        text_splits = []
-        text_split_sections = []
-        for md_header_split, md_header_split_section in zip(md_header_splits, md_header_split_sections):
-            for text_split in text_splitter.split_documents([md_header_split]):
-                text_splits.append(text_split.page_content)
-                text_split_sections.append(md_header_split_section)
-
-        return [
-            Element(
-                type='text', text=text_split,
-                metadata={
-                    'source': Path(file_path).name,
-                    'uid': hashlib.sha256(str.encode(text_split)).hexdigest()
-                }
+            # Further split each section into chunks.
+            text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+                model_name=os.getenv('OPENAI_EMBEDDING_MODEL'), chunk_size=1500, chunk_overlap=0,
             )
-            for text_split, md_header_split_section in zip(text_splits, md_header_split_sections)
-        ]
+
+            text_splits = []
+            # Note: text_split_sections is constructed if needed for additional metadata.
+            # Here, we only use it for debugging; if needed, attach it to each Element.
+            text_split_sections = []
+            for md_split, md_split_section in zip(md_header_splits, md_header_split_sections):
+                for text_split in text_splitter.split_documents([md_split]):
+                    text_splits.append(text_split.page_content)
+                    text_split_sections.append(md_split_section)
+
+            # Build Element objects from each text chunk.
+            elements = [
+                Element(
+                    type='text',
+                    text=text_split,
+                    metadata={
+                        'source': Path(file_path).name,
+                        'uid': hashlib.sha256(text_split.encode()).hexdigest()
+                    }
+                )
+                for text_split in text_splits
+            ]
+            return elements
+        except Exception as e:
+            logger.exception("Error processing markdown file %s: %s", file_path, e)
+            return []
 
     def load_text(self, file_path):
         try:
@@ -226,7 +248,7 @@ class DocumentLoader:
             return []
 
         text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            model_name='text-embedding-ada-002', chunk_size=1500, chunk_overlap=0,
+            model_name=os.getenv('OPENAI_EMBEDDING_MODEL'), chunk_size=1500, chunk_overlap=0,
         )
 
         return [
@@ -249,7 +271,7 @@ class DocumentLoader:
             return []
 
         text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            model_name='text-embedding-ada-002', chunk_size=1500, chunk_overlap=0,
+            model_name=os.getenv('OPENAI_EMBEDDING_MODEL'), chunk_size=1500, chunk_overlap=0,
         )
 
         texts = []
@@ -322,7 +344,7 @@ def get_embedding(text: str):
     # This function calls the external API to get an embedding.
     return client.embeddings.create(
         input=text,
-        model='text-embedding-ada-002'
+        model=os.getenv('OPENAI_EMBEDDING_MODEL')
     )
 
 @timeout_decorator(timeout=60)
@@ -389,25 +411,46 @@ def remove_file(file) -> None:
         logger.warning("File %s does not exist", file_path)
 
 
-def process_trigger_document_loader(trigger_node, channel_layer, group_name) -> ElementList:
+def process_trigger_document_loader(trigger_node, files, channel_layer, group_name) -> ElementList:
     """
     Process a trigger node of type documentLoader.
-    Loads documents, deletes associated files, and returns an ElementList.
+    Saves uploaded files to temporary storage, loads documents from them,
+    deletes the temporary files, and returns an ElementList.
     """
     texts = []
-    for file in trigger_node.files.all():
+    for file in files:
+        suffix = os.path.splitext(file.name)[1]
+        tmp_path = None  # Initialize tmp_path
         try:
-            loaded_texts = load_document(file)
-            texts.extend(loaded_texts)
-        except TimeoutWorkflowException as te:
-            logger.error("Timeout while loading document for file %s: %s", str(file.file), te)
-            update_status(channel_layer, group_name, 1, 'warning', f"Timeout while loading document for file {str(file.file)}: {te}")
-        except Exception as exc:
-            logger.exception("Error loading document for file %s", str(file.file))
-        # Remove file using a robust approach.
-        file_path = os.path.join('media', str(file.file))
-        remove_file(file)
+            # Save the uploaded file to a temporary file.
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                for chunk in file.chunks():
+                    tmp.write(chunk)
+                tmp_path = tmp.name
+
+            # Process the document using the temporary file path.
+            try:
+                loaded_texts = load_document(tmp_path)
+                texts.extend(loaded_texts)
+            except TimeoutWorkflowException as te:
+                logger.error("Timeout while loading document for file %s: %s", file.name, te)
+                update_status(
+                    channel_layer, group_name, 1, 'warning',
+                    f"Timeout while loading document for file {file.name}: {te}"
+                )
+            except Exception as exc:
+                logger.exception("Error loading document for file %s", file.name)
+        except Exception as outer_exc:
+            logger.exception("Error saving temporary file for %s: %s", file.name, outer_exc)
+        finally:
+            # Attempt to remove the temporary file regardless of processing outcome.
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception as cleanup_exc:
+                    logger.exception("Error removing temporary file %s", tmp_path)
     return ElementList(output=[element.model_dump() for element in texts])
+
 
 
 
@@ -468,10 +511,9 @@ def process_chat_agent(current_agent, agent_input: Union[ChatTriggerEvent, ChatE
     # Retrieve the chat model connection.
     chat_model_conn = current_agent.connections_out.filter(connection_type='chat_model').first()
     if not chat_model_conn:
-        # update_status(channel_layer, group_name, -1, 'failed', "Workflow failed: Missing chat model connection.")
         raise WorkflowException("Missing chat model connection.")
     chat_model_agent = chat_model_conn.target
-    chat_model = chat_model_agent.properties.get('model', '')
+    chat_model = chat_model_agent.properties.get('model', os.getenv('OPENAI_CHAT_MODEL'))
     if not chat_model:
         raise WorkflowException("Missing chat model.")
 
@@ -521,45 +563,52 @@ def process_chat_agent(current_agent, agent_input: Union[ChatTriggerEvent, ChatE
                 for message in messages
             ])
             response = client.beta.chat.completions.parse(
-                model="gpt-4o-mini",
+                model=os.getenv('OPENAI_CHAT_MODEL'),
                 messages=messages,
                 tools=tools,
                 response_format=ChatEvent
             )
             tool_calls = response.choices[0].message.tool_calls
             if tool_calls:
-                tool_call = tool_calls[0]
-                try:
-                    args = json.loads(tool_call.function.arguments)
-                except json.JSONDecodeError:
-                    logger.exception("Failed to parse tool call arguments.")
-                    args = {}
-                if tool_call.function.name == "knowledge_base_search":
-                    tool_result = knowledge_base_search_tool(**args)
-                    # Append the tool call and its result to the conversation.
-                    messages.append(response.choices[0].message)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": tool_result
-                    })
-                    response_2 = client.beta.chat.completions.parse(
-                        model="gpt-4o-mini",
-                        messages=messages,
-                        tools=tools,
-                        response_format=ChatEvent
-                    )
-                    final_content = response_2.choices[0].message.content.strip()
-                    logger.info("Final content from tool call: %s", final_content)
-                else:
-                    logger.warning("Received unknown function call: %s", tool_call.function.name)
+                # Append the assistant message with tool_calls to messages
+                assistant_message = response.choices[0].message
+                messages.append(assistant_message)
+                
+                # Process each tool_call
+                for tool_call in tool_calls:
+                    try:
+                        args = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError:
+                        logger.exception("Failed to parse tool call arguments.")
+                        args = {}
+                    
+                    if tool_call.function.name == "knowledge_base_search":
+                        tool_result = knowledge_base_search_tool(**args)
+                        # Append tool response for each tool_call
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": tool_result  # Ensure this is a string
+                        })
+                    else:
+                        logger.warning("Received unknown function call: %s", tool_call.function.name)
+                
+                # Get final response after handling all tool calls
+                response_2 = client.beta.chat.completions.parse(
+                    model=os.getenv('OPENAI_CHAT_MODEL'),
+                    messages=messages,
+                    tools=tools,
+                    response_format=ChatEvent
+                )
+                final_content = response_2.choices[0].message.content.strip()
+                logger.info("Final content from tool call: %s", final_content)
         update_status(channel_layer, group_name, str(retriever_node.slug), 'completed',
                       f"{retriever_node.type} completed.")
 
     # Call the chat model.
     try:
         response = client.beta.chat.completions.parse(
-            model='gpt-4o-mini',
+            model=os.getenv('OPENAI_CHAT_MODEL'),
             messages=messages,
             response_format=ChatEvent
         )
@@ -669,7 +718,7 @@ def process_agent(current_agent, agent_input: Union[ChatTriggerEvent, ChatEvent,
 
 
 @shared_task(bind=True)
-def process_workflow(self, node_id: str, trigger_id: str, new_memory: ChatMemory = None) -> ChatMemory:
+def process_workflow(self, node_id: str, trigger_id: str, new_memory: ChatMemory = None, files = None) -> ChatMemory:
     """
     Process the workflow by traversing agents starting at the trigger node.
     Returns a list of final outputs.
@@ -699,7 +748,20 @@ def process_workflow(self, node_id: str, trigger_id: str, new_memory: ChatMemory
             input_text = new_memory['input']
             initial_input = ChatTriggerEvent(output=input_text)
         elif trigger_node.type == 'documentLoader':
-            initial_input = process_trigger_document_loader(trigger_node, channel_layer, group_name)
+            if not files:
+                raise WorkflowException("No files were uploaded")
+            try:
+                initial_input = process_trigger_document_loader(trigger_node, files, channel_layer, group_name)
+            except Exception as e:
+                logger.exception("Error processing documentLoader for trigger node %s", trigger_node.slug)
+                update_status(
+                    channel_layer,
+                    group_name,
+                    str(trigger_node.slug),
+                    'failed',
+                    f"{trigger_node.type} failed."
+                )
+                return []
         else:
             initial_input = ChatTriggerEvent(output=input_text)
 

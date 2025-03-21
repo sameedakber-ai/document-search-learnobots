@@ -9,7 +9,7 @@ const ChatTriggerNode: FC<ChatTriggerNodeProps> = (props) => {
     const { id, data } = props;
     return (
         <BaseNode {...props} classNames='rounded-l-2xl p-4'>
-            <button
+            <div
                 className="z-50 absolute -left-5 top-5"
                 onClick={() => data.onOpenChat(id)}
             >
@@ -27,7 +27,7 @@ const ChatTriggerNode: FC<ChatTriggerNodeProps> = (props) => {
                         d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z"
                     />
                 </svg>
-            </button>
+            </div>
             <Handle type="source" id={`main-${id}`} position={Position.Right}/>
         </BaseNode>
     );

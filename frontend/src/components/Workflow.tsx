@@ -1,6 +1,8 @@
 import { v4 as uuidv4 } from "uuid";
 import { useParams } from "react-router-dom";
 import api from "../api";
+import ReactMarkdown from 'react-markdown';
+
 
 import React, {
     ChangeEvent,
@@ -104,17 +106,46 @@ export interface Log {
 const initialNodes: AgentNode[] = [];
 const initialEdges: Edge[] = [];
 
+const getPositionForType = (type) => {
+  switch (type) {
+    case 'chatTrigger':
+      // ChatTrigger at x=0, y=0 (left side)
+      return { x: 200, y: 200 };
+    case 'chat':
+      // Chat node to the right of chatTrigger (x positive, same y)
+      return { x: 300, y: 200 };
+    case 'chatModel':
+      // ChatModel above chat node with negative y and negative x
+      return { x: 315, y: 300 };
+    case 'vectorStore':
+      // Retriever at same -y as chatModel but x=0
+      return { x: 300, y: 375 };
+    case 'memory':
+      // Memory at same -y as chatModel but positive x offset
+      return { x: 446, y: 300 };
+    case 'documentLoader':
+      // DocumentLoader above with negative y and negative x
+      return { x: 200, y: 375 };
+    default:
+      // Default fallback
+      return { x: 0, y: 0 };
+  }
+};
+
 const Workflow: React.FC = () => {
     const { id } = useParams < { id: string } > ();
 
     const [agents, setAgents, onAgentsChange] = useNodesState<AgentNode>(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initialEdges);
+
     const [activeNode, setActiveNode] = useState <AgentNode | null>(null);
     const [activeDocumentLoader, setActiveDocumentLoader] = useState<AgentNode | null>(null);
-    const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
+
     const [memories, setMemories] = useState<ChatMemory[]>([]);
     const [chatInput, setChatInput] = useState<string>('');
     const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+    const [currentBatchIndex, setCurrentBatchIndex] = useState(0);
+
     const [logs, setLogs] = useState <Log[]>([]);
 
     const textareaRef = useRef <HTMLTextAreaElement>(null);
@@ -159,10 +190,6 @@ const Workflow: React.FC = () => {
             textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
         }
     }, [chatInput]);
-
-    useEffect(() => {
-        getAgents().then(r => console.log(r));
-    }, [getAgents]);
 
 
     useEffect(() => {
@@ -221,19 +248,9 @@ const Workflow: React.FC = () => {
         };
     }, [id, setAgents]);
 
-    const handleRunDocumentLoaderNode = useCallback(
-        async (triggerId: string) => {
-            const res = await api.post(`/api/start-workflow/`, {
-                node_id: id,
-                trigger_id: triggerId,
-                files: chatInput,
-            });
-        },[id]);
 
-
-    const getAgents = useCallback(async (): Promise < void > => {
+    const getAgents = useCallback(async (data): Promise < void > => {
         try {
-            const { data } = await api.get(`api/workflow/${id}/agents/`);
             const agents: AgentNode[] = data.map((agentData: AgentResponse) => {
                 const next_agents: string[] = [];
                 let memory_node: string | undefined = undefined;
@@ -259,6 +276,8 @@ const Workflow: React.FC = () => {
                     }
                 });
 
+                console.log("type: ", agentData.type);
+
                 if (agentData.type === 'chatTrigger') {
                     setMemories(agentData.memories || []);
                 }
@@ -274,12 +293,8 @@ const Workflow: React.FC = () => {
                         retriever_node,
                         status: 'pending',
                         flowType: getFlowType(agentData.type),
-                        onRun: handleRunDocumentLoaderNode
                     },
-                    position: {
-                        x: agentData.properties.position_x,
-                        y: agentData.properties.position_y,
-                    },
+                    position: getPositionForType(agentData.type),
                 }
             });
 
@@ -352,8 +367,21 @@ const Workflow: React.FC = () => {
         setAgents,
         setEdges,
         getFlowType,
-        handleRunDocumentLoaderNode,
     ]);
+
+
+    useEffect(() => {
+      const fetchAgents = async () => {
+        try {
+          const { data } = await api.get(`api/workflow/${id}/agents/`) as AgentResponse[];
+          await getAgents(data);
+        } catch (error) {
+          console.error('Error fetching agents:', error);
+        }
+      };
+
+      fetchAgents();
+    }, [id, getAgents]);
 
     const onConnect = useCallback(async (params: OnConnectParams): Promise < void > => {
         const { source, sourceHandle, target, targetHandle } = params;
@@ -448,10 +476,43 @@ const Workflow: React.FC = () => {
         setChatInput(e.target.value);
     }
 
+    const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+      if (!e.target.files) return;
+
+      const files = Array.from(e.target.files);
+
+      if (!activeDocumentLoader || files.length === 0) return;
+
+      const BatchSize = 5;
+
+      const processBatch = async (filesBatch: File[]) => {
+        const formData = new FormData();
+        filesBatch.forEach((file) => {
+          formData.append('files', file, file.name);
+        });
+        formData.append('node_id', id);
+        formData.append('trigger_id', activeDocumentLoader.id);
+
+        await api.post(`/api/start-workflow/${id}/`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      };
+
+      try {
+        for (let i = 0; i < files.length; i += BatchSize) {
+          const filesBatch = files.slice(i, i + BatchSize);
+          await processBatch(filesBatch);
+        }
+      } catch (error) {
+        console.error('Error processing file batches:', error);
+      }
+    };
+
+
     const handleSubmitChat = async (e: FormEvent < HTMLFormElement > ) => {
         e.preventDefault();
 
-        if (!activeNode) return;
+        if (!activeNode || chatInput.length === 0) return;
 
         const memID = uuidv4();
         const newMemory: ChatMemory = {
@@ -465,7 +526,11 @@ const Workflow: React.FC = () => {
 
         if (chatInput.trim()) {
             const triggerId = activeNode?.id;
-            const res = await api.post(`/api/start-workflow/`, { node_id: id, trigger_id: triggerId, input: newMemory });
+            const res = await api.post(`/api/start-workflow/${id}/`, { 
+                node_id: id, 
+                trigger_id: triggerId, 
+                input: newMemory 
+            });
             const modifiedMemory: ChatMemory = res.data.new_memory;
             setMemories((prevMemories) =>
                 prevMemories.map((memory) =>
@@ -477,10 +542,38 @@ const Workflow: React.FC = () => {
 
     const handleSubmitDocuments = async (e: ChangeEvent<HTMLInputElement>) => {
         e.preventDefault();
-        if (!activeDocumentLoader) return;
 
-        activeDocumentLoader.data.onRun(activeDocumentLoader.id);
-        setSelectedFiles([]);
+        console.log(selectedFiles.length);
+
+        if (!activeDocumentLoader || selectedFiles.length === 0) return;
+
+        const processBatch = async (filesBatch: File[]) => {
+          const formData = new FormData();
+          filesBatch.forEach((file) => {
+            formData.append('files', file, file.name);
+          });
+          formData.append('node_id', id);
+          formData.append('trigger_id', triggerId);
+
+          await api.post(`/api/start-workflow/${id}`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+        };
+
+        try {
+          for (let i = 0; i < selectedFiles.length; i += BatchSize) {
+            const filesBatch = selectedFiles.slice(i, i + BatchSize);
+            await processBatch(filesBatch);
+          }
+          setSelectedFiles([]);
+        } catch (error) {
+          console.error('Error processing file batches:', error);
+        }
+    }
+
+    const handleResetWorkflow = async () => {
+        const { data } = await api.post(`/api/reset-workflow/${id}/`) as AgentResponse;
+        getAgents(data);
     }
 
 
@@ -556,18 +649,15 @@ className = "p-4 overflow-y-auto flex-1 min-h-0"
         { /* Bottom Left: Chat Window */ }
         <div className="border border-gray-700 flex flex-col min-h-0" >
     {/* Chat Messages Area */ }
-    < div 
-ref = { chatContainerRef }
-className = "flex-1 overflow-y-auto min-h-0 p-4"
-    >
+    <div ref = { chatContainerRef } className = "flex-1 overflow-y-auto min-h-0 p-4">
     <h1 className="text-2xl text-center p-4 bg-gray-700 sticky top-0 rounded-lg" > Chat </h1>
-{
-    activeNode && (
-        <div className="text-sm text-gray-400 mb-4 text-center" >
-            { activeNode.id }
+    {
+        activeNode && (
+            <div className="text-sm text-gray-400 mb-4 text-center" >
+                { activeNode.id }
             </div>
-            )
-}
+        )
+    }
 {
     memories?.map((memory: ChatMemory, index) => {
         return (
@@ -576,7 +666,7 @@ className = "flex-1 overflow-y-auto min-h-0 p-4"
                 memory.input && (
                     <div className="flex justify-start">
                         <div className="w-[40%] bg-gray-800 text-gray-100 p-4 rounded-xl">
-                            { memory.input }
+                            <ReactMarkdown>{memory.input}</ReactMarkdown>
                             </div>
                             </div>
                   )
@@ -585,7 +675,7 @@ className = "flex-1 overflow-y-auto min-h-0 p-4"
     memory.output && (
         <div className="flex justify-end" >
             <div className="w-[40%] bg-gray-700 text-gray-100 p-4 rounded-xl" >
-                { memory.output }
+                <ReactMarkdown>{memory.output}</ReactMarkdown>
                 </div>
                 </div>
                   )
@@ -635,19 +725,22 @@ style = {{
                     < p class="mb-2 text-sm text-gray-500 dark:text-gray-400" > <span class="font-semibold" > Click to upload < /span> or drag and drop</p >
                         <p class="text-xs text-gray-500 dark:text-gray-400" > PDF, DOCX, MD, TXT, JSON </p>
                             </div>
-                            <input id="dropzone-file" type="file" class="hidden" value={selectedFiles} onChange={handleSubmitDocuments} />
+                            <input 
+    id="dropzone-file" 
+    type="file" 
+    className="hidden" 
+    onChange={handleFileChange} 
+    multiple
+  />
                                 </label>
                                 </div>
                                 </div>
   
 {/* Sticky buttons container */ }
 <div className="sticky bottom-0 p-4 mt-auto space-y-4" >
-    <button className="p-4 bg-amber-600 rounded-md w-full hover:bg-amber-700 transition-colors" >
-        Reset Memory
+    <button onClick={handleResetWorkflow} className="p-4 bg-amber-600 rounded-md w-full hover:bg-amber-700 transition-colors" >
+        Reset Workflow
             </button>
-            < button className = "p-4 bg-amber-600 rounded-md w-full hover:bg-amber-700 transition-colors" >
-                Reset Documents
-                    </button>
                     </div>
                     </div> <
         /div> < /

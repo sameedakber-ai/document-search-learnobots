@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 .react-flow__controls button {
   color: #ffffff !important;
@@ -15,4 +16,8 @@
 
 textarea {
   line-height: 1.25rem; /* Match this with your design system */
+}
+
+.markdown > * {
+  all: revert;
 }

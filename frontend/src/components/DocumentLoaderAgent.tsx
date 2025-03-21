@@ -87,9 +87,8 @@ const DocumentLoaderAgent: FC<DocumentLoaderAgentNodeProps> = (props) => {
 
     return (
         <BaseNode {...props} classNames="rounded-l-2xl p-4">
-            {/* The dropzone area using the same SVG icon */}
             <div
-                className="z-50 absolute -left-5 top-5 cursor-pointer"
+                className="z-50 absolute -left-5 top-5"
                 onClick={() => inputRef.current?.click()}
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
@@ -108,16 +107,6 @@ const DocumentLoaderAgent: FC<DocumentLoaderAgentNodeProps> = (props) => {
                         d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"
                     />
                 </svg>
-                {/* Hidden file input to support click selection (multi and directory selection) */}
-                <input
-                    type="file"
-                    multiple
-                    // Note: The 'webkitdirectory' attribute is non-standard but works in Chromium-based browsers.
-                    webkitdirectory="true"
-                    style={{ display: "none" }}
-                    ref={inputRef}
-                    onChange={handleFilesSelected}
-                />
             </div>
             <Handle
                 type="source"

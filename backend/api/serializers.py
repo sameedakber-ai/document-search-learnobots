@@ -49,7 +49,7 @@ class NodeConnectionSerializer(serializers.ModelSerializer):
         required=True,
         allow_null=False
     )
-    # We keep all fields here for standalone use.
+
     class Meta:
         model = NodeConnection
         fields = ['id', 'source', 'target', 'connection_type']
@@ -58,14 +58,12 @@ class NodeConnectionSerializer(serializers.ModelSerializer):
         source = validated_data.get('source')
         connection_type = validated_data.get('connection_type')
         
-        # For one-to-one connection types, check if one already exists for this source.
         if connection_type in ['retriever', 'chat_model', 'memory']:
             if NodeConnection.objects.filter(source=source, connection_type=connection_type).exists():
                 raise serializers.ValidationError(
                     f"A '{connection_type}' connection for this source already exists."
                 )
         
-        # Create and return the new NodeConnection
         return NodeConnection.objects.create(**validated_data)
 
 
@@ -91,7 +89,6 @@ class MemorySerializer(serializers.ModelSerializer):
 
 
 class AgentSerializer(serializers.ModelSerializer):
-    # Use the nested serializer to return only target and connection_type.
     connections_out = NodeConnectionNestedSerializer(many=True, read_only=True)
     memories = MemorySerializer(many=True, read_only=True)
 

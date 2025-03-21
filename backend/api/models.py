@@ -63,8 +63,6 @@ class NodeConnection(models.Model):
             )
         ]
 
-
-
 class File(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     file = models.FileField(upload_to=get_upload_path, validators=(validate_is_type, validate_is_readable))
@@ -82,7 +80,6 @@ class File(models.Model):
     def get_ext(self):
         return os.path.splitext(self.get_path)[1].lstrip('.').lower()
 
-
 class Document(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     uid = models.CharField(max_length=256, editable=False)
@@ -97,13 +94,11 @@ class Document(models.Model):
             models.UniqueConstraint(fields=['uid', 'name'], name='unique_uid_name')
         ]
 
-
 class Workflow(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=256)
     date = models.DateTimeField(auto_now_add=True)
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='workflows')
-
 
 class Memory(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
