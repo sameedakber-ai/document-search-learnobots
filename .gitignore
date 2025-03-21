@@ -10,3 +10,4 @@ backend/api/async_tasks.py
 node_modules/
 package-lock.json
 package.json
+frontend/src/components/Workflow_backup.tsx

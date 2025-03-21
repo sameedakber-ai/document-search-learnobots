@@ -18,12 +18,10 @@ export interface AgentBase {
     chat_model_node?: string;
     retriever_node?: string;
     status: string;
-    onDelete: (id: string) => void;
     flowType: string;
 }
 
 export interface ChatTriggerNodeBase extends AgentBase {
-    onOpenChat: (nodeId: string) => void;
 }
 
 export interface DocumentLoaderBase extends AgentBase {

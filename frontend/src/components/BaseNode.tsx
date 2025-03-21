@@ -90,7 +90,6 @@ const BaseNode = <T extends AgentNode>({
             {showDeleteButton && (
                 <button
                     className="absolute right-1 top-1"
-                    onClick={() => data.onDelete(id)}
                 >
                     <svg
                         xmlns="http://www.w3.org/2000/svg"
@@ -118,9 +117,9 @@ const BaseNode = <T extends AgentNode>({
                             ? "border-orange-300 opacity-50"
                             : "border-white"}`}
             >
-                <button onClick={handleOpenModal} className="">
+                <div className="">
                     {getIcon(data.type)}
-                </button>
+                </div>
             </div>
 
             {children}

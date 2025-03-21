@@ -100,7 +100,7 @@ class Document(models.Model):
 
 class Workflow(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=256, blank=True)
+    name = models.CharField(max_length=256)
     date = models.DateTimeField(auto_now_add=True)
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='workflows')
 
@@ -108,6 +108,6 @@ class Workflow(models.Model):
 class Memory(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     slug = models.UUIDField(unique=True)
-    input = models.TextField(blank=True)
+    input = models.TextField()
     output = models.TextField(blank=True, null=True)
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='memories')
