@@ -14,3 +14,4 @@ frontend/src/components/Workflow_backup.tsx
 aws
 awscliv2.zip
 backend/staticfiles/
+.env

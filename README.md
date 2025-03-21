@@ -117,9 +117,29 @@ The frontend is a modern React application written in TypeScript. It offers:
 
 ## Deployment
 
-document-search is containerized using Docker. The deployment process is streamlined with Docker Compose:
+document-search is containerized using Docker. The deployment process is streamlined with Docker Compose.
 - **Local Deployment:**  
-  Use `docker-compose up --build` to build the images and launch the entire stack locally.
+  Before deploying, create a `.env` file in the root directory (document-search) with the following fields:
+  ```env
+      FRONTEND_PORT='8080'
+      VITE_API_URL="http://localhost:8000"
+
+      API_PORT='8000'
+
+      DB_NAME='postgresdb'
+      DB_USER='user'
+      DB_PASSWORD='password'
+      DB_HOST='postgres'
+      DB_PORT='5432'
+
+      REDIS_HOST='redis'
+      REDIS_PORT='6379'
+
+      OPENAI_API_KEY="<your_openai_api_key>"
+      OPENAI_CHAT_MODEL='gpt-4o'
+      OPENAI_EMBEDDING_MODEL='text-embedding-ada-002'
+  
+  Then, use `docker-compose up --build` to build the images and launch the entire stack locally.
 - **Cloud Deployment:**  
   The application has been deployed on AWS EC2, ensuring scalability and robust performance in production environments.
 

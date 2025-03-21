@@ -547,7 +547,6 @@ const Workflow: React.FC = () => {
         <h1 className="text-2xl">AI Workflow Automation</h1>
       </a>
       <div className="flex space-x-10">
-        <a className="text-lg" href="/profile">Profile</a>
         <a className="text-lg" href="/logout">Logout</a>
       </div>
     </header>
