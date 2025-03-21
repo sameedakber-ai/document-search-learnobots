@@ -4,10 +4,8 @@ backend/db.*
 backend/media
 backend/api/migrations
 backend/.env
-backend/backend/__pycache__/
-backend/api/__pycache__
+**/__pycache__/
 neo4j
-backend/api/__pycache__/*
 backend/api/async_tasks.py
 node_modules/
 package-lock.json
